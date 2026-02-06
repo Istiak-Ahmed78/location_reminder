@@ -11,6 +11,17 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  flutter_bloc: ^8.1.6
+  equatable: ^2.0.5
+  geolocator: ^12.0.0
+  permission_handler: ^11.3.1
+  get_it: ^7.7.0
+  shared_preferences: ^2.5.4
+  flutter_local_notifications: ^20.0.0
+  bloc: ^8.1.4
+  dartz: ^0.10.1
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:
