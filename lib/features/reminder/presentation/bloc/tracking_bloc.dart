@@ -28,7 +28,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   double _lastDistance = double.infinity;
   DateTime? _lastLocationTime;
   bool _isLocationOnlyMode = false;
-  bool _wasInsideRadius = false; // Track previous state
+  bool _wasInsideRadius = false;
 
   TrackingBloc({
     required this.watchPosition,
@@ -52,7 +52,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     TrackingStarted event,
     Emitter<TrackingState> emit,
   ) async {
-    print('🚀 [TRACKING] TrackingStarted event received');
     _isLocationOnlyMode = false;
     emit(
       state.copyWith(status: TrackingStatus.loading, clearErrorMessage: true),
@@ -60,10 +59,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
     try {
       final reminder = await getActiveReminder(const NoParams());
-      print('🚀 [TRACKING] Got active reminder: ${reminder?.label ?? "NULL"}');
 
       if (reminder == null) {
-        print('❌ [TRACKING] No active reminder found!');
         emit(
           state.copyWith(
             status: TrackingStatus.failure,
@@ -74,11 +71,9 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         return;
       }
 
-      print('🚀 [TRACKING] Starting tracking for: ${reminder.label}');
       _resetTrackingState();
       await _cancelAllSubscriptions();
 
-      // ✅ AWAIT this method call
       await _startTrackingWithSettings(
         distanceFilter: 10,
         accuracy: LocationAccuracy.high,
@@ -88,9 +83,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
       _setupAdaptiveTimer(reminder, emit);
       _startServiceStatusListener();
-      print('✅ [TRACKING] Tracking started successfully');
     } catch (e) {
-      print('❌ [TRACKING] Error starting tracking: $e');
       emit(
         state.copyWith(
           status: TrackingStatus.failure,
@@ -163,6 +156,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     emit(
       state.copyWith(
         status: TrackingStatus.idle,
+        isLive: false,
         errorMessage: event.error,
         clearErrorMessage: event.error == null,
       ),
@@ -170,99 +164,50 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   }
 
   /// Handles location updates from the stream
-  /// Handles location updates from the stream
   Future<void> _onLocationUpdated(
     _TrackingLocationUpdated event,
     Emitter<TrackingState> emit,
   ) async {
-    print(
-      '🔵 [TRACKING] Location updated: ${event.location.latitude}, ${event.location.longitude}',
-    );
+    final location = event.location;
+    _lastLocationTime = DateTime.now();
 
-    final reminder = state.activeReminder;
-    print('🔵 [TRACKING] Active reminder: ${reminder?.label ?? "NULL"}');
-
-    // Location-only mode (no reminder)
-    if (reminder == null) {
-      print('🟡 [TRACKING] Location-only mode (no reminder)');
-      emit(
-        state.copyWith(
-          status: TrackingStatus.tracking,
-          current: event.location,
-          isLive: true,
-          distanceMeters: null,
-          insideRadius: null,
-          clearErrorMessage: true,
-        ),
+    if (state.activeReminder != null) {
+      final reminder = state.activeReminder!;
+      final distance = _calculateDistance(
+        location.latitude,
+        location.longitude,
+        reminder.latitude,
+        reminder.longitude,
       );
-      return;
-    }
 
-    // ==================== REMINDER TRACKING MODE ====================
-    print('🟢 [TRACKING] Reminder tracking mode activated');
+      final isInsideRadius = distance <= reminder.triggerDistanceMeters;
+      final justEntered = isInsideRadius && !_wasInsideRadius;
 
-    // Calculate distance to destination
-    final distance = _calculateDistance(
-      event.location.latitude,
-      event.location.longitude,
-      reminder.latitude,
-      reminder.longitude,
-    );
+      if (justEntered) {
+        await _triggerArrivalNotification(reminder, distance);
+      }
 
-    print('🟢 [TRACKING] Calculated distance: ${distance.toStringAsFixed(2)}m');
-    print('🟢 [TRACKING] Trigger distance: ${reminder.triggerDistanceMeters}m');
-
-    // Check if inside radius
-    final isInsideRadius = distance <= reminder.triggerDistanceMeters;
-    print('🟢 [TRACKING] Inside radius: $isInsideRadius');
-
-    // Detect entry into radius (was outside, now inside)
-    final justEntered = !_wasInsideRadius && isInsideRadius;
-    print(
-      '🟢 [TRACKING] Just entered: $justEntered (was inside: $_wasInsideRadius)',
-    );
-
-    // Update tracking state
-    _lastDistance = distance;
-    _lastLocationTime = event.location.timestamp;
-    _wasInsideRadius = isInsideRadius;
-
-    // Trigger notification on entry
-    if (justEntered && !state.triggered) {
-      print('🔔 [TRACKING] Triggering arrival notification!');
-      await _triggerArrivalNotification(reminder, distance);
+      _wasInsideRadius = isInsideRadius;
+      _lastDistance = distance;
 
       emit(
         state.copyWith(
-          status: TrackingStatus.tracking,
-          current: event.location,
-          isLive: true,
+          current: location,
           distanceMeters: distance,
           insideRadius: isInsideRadius,
-          triggered: true, // Mark as triggered
-          clearErrorMessage: true,
+          status: TrackingStatus.tracking,
+          isLive: true,
         ),
       );
     } else {
-      print(
-        '📍 [TRACKING] Normal update - Distance: ${distance.toStringAsFixed(2)}m',
-      );
-      // Normal update without notification
       emit(
         state.copyWith(
+          current: location,
           status: TrackingStatus.tracking,
-          current: event.location,
           isLive: true,
-          distanceMeters: distance,
-          insideRadius: isInsideRadius,
-          clearErrorMessage: true,
         ),
       );
     }
-
-    print(
-      '✅ [TRACKING] State emitted - distanceMeters: ${state.distanceMeters}',
-    );
   }
 
   /// Adjusts tracking settings based on distance and movement
@@ -275,7 +220,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
     await _locationSubscription?.cancel();
 
-    // ✅ AWAIT this method call
     await _startTrackingWithSettings(
       distanceFilter: event.distanceFilter,
       accuracy: event.accuracy,
@@ -291,6 +235,13 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   ) async {
     if (_isLocationOnlyMode) {
       await _startLiveLocationStream(emit);
+    } else if (state.activeReminder != null) {
+      await _startTrackingWithSettings(
+        distanceFilter: 10,
+        accuracy: LocationAccuracy.high,
+        reminder: state.activeReminder!,
+        emit: emit,
+      );
     }
   }
 
@@ -305,6 +256,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     emit(
       state.copyWith(
         isLive: false,
+        status: TrackingStatus.tracking,
         errorMessage:
             'Location service is disabled. Turn it on to get live updates.',
         clearErrorMessage: false,
@@ -372,12 +324,25 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     required DestinationReminder reminder,
     required Emitter<TrackingState> emit,
   }) async {
-    print('⚙️ [TRACKING] Starting tracking with settings:');
-    print('   - Distance filter: $distanceFilter');
-    print('   - Accuracy: $accuracy');
-    print('   - Reminder: ${reminder.label}');
-
     try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        if (!emit.isDone) {
+          emit(
+            state.copyWith(
+              status: TrackingStatus.tracking,
+              activeReminder: reminder,
+              isLive: false,
+              errorMessage:
+                  'Location service is disabled. Turn it on to get live updates.',
+              clearErrorMessage: false,
+            ),
+          );
+        }
+        return;
+      }
+
       final stream = await watchPosition(
         WatchPositionParams(distanceFilter: distanceFilter, accuracy: accuracy),
       );
@@ -385,13 +350,11 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       await _locationSubscription?.cancel();
 
       _locationSubscription = stream.listen(
-        (location) {
-          print('📡 [TRACKING] Location received from stream');
-          add(_TrackingLocationUpdated(location));
-        },
+        (location) => add(_TrackingLocationUpdated(location)),
         onError: (error) {
-          print('❌ [TRACKING] Stream error: $error');
-          add(TrackingStopped(error: error.toString()));
+          if (!isClosed) {
+            add(const _TrackingServiceDisabled());
+          }
         },
       );
 
@@ -404,6 +367,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
             distanceMeters: null,
             insideRadius: null,
             triggered: false,
+            isLive: false,
             trackingSettings: TrackingSettings(
               distanceFilter: distanceFilter,
               accuracy: accuracy.toString(),
@@ -412,15 +376,17 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
             clearErrorMessage: true,
           ),
         );
-
-        print(
-          '✅ [TRACKING] Settings applied, activeReminder set: ${reminder.label}',
-        );
       }
     } catch (e) {
-      print('❌ [TRACKING] Error in _startTrackingWithSettings: $e');
       if (!emit.isDone) {
-        add(TrackingStopped(error: e.toString()));
+        emit(
+          state.copyWith(
+            status: TrackingStatus.failure,
+            isLive: false,
+            errorMessage: e.toString(),
+            clearErrorMessage: false,
+          ),
+        );
       }
     }
   }
@@ -449,6 +415,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     DestinationReminder reminder,
     Emitter<TrackingState> emit,
   ) {
+    _adaptiveTimer?.cancel();
+
     _adaptiveTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       final currentDistance = state.distanceMeters;
       final lastUpdate = _lastLocationTime;
@@ -493,7 +461,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     double distanceFilter;
     LocationAccuracy accuracy;
 
-    // Base settings on distance
     if (currentDistance > 5000) {
       distanceFilter = 1000;
       accuracy = LocationAccuracy.low;
@@ -508,12 +475,10 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       accuracy = LocationAccuracy.high;
     }
 
-    // Reduce frequency if not moving toward destination
     if (!isMovingToward && currentDistance > 1000) {
       distanceFilter *= 2;
     }
 
-    // Reduce frequency if stationary for a long time
     if (timeSinceLastUpdate > const Duration(minutes: 5) &&
         currentDistance > 1000) {
       distanceFilter = 2000;
@@ -546,7 +511,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         body: 'You are ${distance.toStringAsFixed(0)}m from your destination!',
       );
     } catch (e) {
-      print('⚠️ Failed to show notification: $e');
+      // Silently handle notification errors
     }
   }
 

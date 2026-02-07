@@ -33,9 +33,19 @@ class _HomeViewState extends State<HomeView> {
     super.initState();
     _mapController = MapController();
 
-    // Start location tracking on app start
-    context.read<TrackingBloc>().add(const TrackingStartedForLocationOnly());
     context.read<ReminderBloc>().add(const ReminderLoaded());
+
+    Future.delayed(const Duration(milliseconds: 100), () {
+      final reminderState = context.read<ReminderBloc>().state;
+
+      if (reminderState.active != null) {
+        context.read<TrackingBloc>().add(const TrackingStarted());
+      } else {
+        context.read<TrackingBloc>().add(
+          const TrackingStartedForLocationOnly(),
+        );
+      }
+    });
   }
 
   @override
@@ -62,7 +72,7 @@ class _HomeViewState extends State<HomeView> {
             left: 16,
             right: 16,
             top: 16,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 60,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -74,7 +84,7 @@ class _HomeViewState extends State<HomeView> {
                   const Icon(Icons.add_alarm, color: Colors.orange, size: 28),
                   const SizedBox(width: 8),
                   const Text(
-                    'Create Location Alarm',
+                    'Set Up New Location Alert',
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
@@ -216,9 +226,7 @@ class _HomeViewState extends State<HomeView> {
                       return;
                     }
 
-                    Navigator.pop(context); // Close bottom sheet
-
-                    // Save reminder
+                    Navigator.pop(context);
                     _saveReminder(label, distance, pickedLocation!);
                   },
                   icon: const Icon(Icons.save),
@@ -242,8 +250,6 @@ class _HomeViewState extends State<HomeView> {
 
   // ==================== SAVE REMINDER ====================
   void _saveReminder(String label, double distance, LatLng location) {
-    print('💾 [HOME] Saving reminder: $label, distance: $distance');
-
     final reminder = DestinationReminder(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       label: label,
@@ -254,17 +260,17 @@ class _HomeViewState extends State<HomeView> {
       isActive: true,
     );
 
-    print(
-      '💾 [HOME] Reminder created: ${reminder.label} at (${reminder.latitude}, ${reminder.longitude})',
-    );
-    print('💾 [HOME] Dispatching ReminderSaved event...');
     context.read<ReminderBloc>().add(ReminderSaved(reminder));
-
-    print('💾 [HOME] Dispatching TrackingStarted event...');
     context.read<TrackingBloc>().add(const TrackingStarted());
 
-    // Move map to reminder location
-    _mapController.move(location, 15);
+    if (_currentLocation != null) {
+      final bounds = LatLngBounds.fromPoints([_currentLocation!, location]);
+      _mapController.fitCamera(
+        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(80)),
+      );
+    } else {
+      _mapController.move(location, 15);
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -273,8 +279,6 @@ class _HomeViewState extends State<HomeView> {
         duration: const Duration(seconds: 3),
       ),
     );
-
-    print('✅ [HOME] Reminder saved successfully');
   }
 
   // ==================== SHOW REMINDER DETAILS ====================
@@ -378,207 +382,244 @@ class _HomeViewState extends State<HomeView> {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
+  // ==================== BUILD LOCATION MARKER ====================
+  Widget _buildLocationMarker(bool isLive) {
+    if (isLive) {
+      return Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.blue.withOpacity(0.3),
+        ),
+        child: const Center(
+          child: Icon(Icons.my_location, color: Colors.blue, size: 24),
+        ),
+      );
+    } else {
+      return Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.grey.withOpacity(0.3),
+        ),
+        child: const Center(
+          child: Icon(Icons.location_searching, color: Colors.grey, size: 24),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          // Map
-          BlocBuilder<TrackingBloc, TrackingState>(
-            builder: (context, trackingState) {
-              // Update current location
-              if (trackingState.current != null) {
-                _currentLocation = LatLng(
-                  trackingState.current!.latitude,
-                  trackingState.current!.longitude,
-                );
-              }
-
-              return BlocBuilder<ReminderBloc, ReminderState>(
-                builder: (context, reminderState) {
-                  final reminder = reminderState.active;
-
-                  return FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter:
-                          _currentLocation ?? const LatLng(25.2828, 89.1077),
-                      initialZoom: 13,
-                      minZoom: 5,
-                      maxZoom: 18,
-                      // No onTap - removed accidental selection
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.location_reminder',
-                      ),
-
-                      // Current location marker
-                      if (_currentLocation != null)
-                        MarkerLayer(
-                          markers: [
-                            Marker(
-                              point: _currentLocation!,
-                              width: 40,
-                              height: 40,
-                              child: const Icon(
-                                Icons.my_location,
-                                color: Colors.blue,
-                                size: 30,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                      // Reminder marker
-                      if (reminder != null)
-                        MarkerLayer(
-                          markers: [
-                            Marker(
-                              point: LatLng(
-                                reminder.latitude,
-                                reminder.longitude,
-                              ),
-                              width: 40,
-                              height: 40,
-                              child: const Icon(
-                                Icons.location_on,
-                                color: Colors.red,
-                                size: 40,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                      // Trigger radius circle
-                      if (reminder != null)
-                        CircleLayer(
-                          circles: [
-                            CircleMarker(
-                              point: LatLng(
-                                reminder.latitude,
-                                reminder.longitude,
-                              ),
-                              radius: reminder.triggerDistanceMeters,
-                              useRadiusInMeter: true,
-                              color: Colors.orange.withOpacity(0.2),
-                              borderColor: Colors.orange,
-                              borderStrokeWidth: 2,
-                            ),
-                          ],
-                        ),
-                    ],
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // Map
+            BlocBuilder<TrackingBloc, TrackingState>(
+              builder: (context, trackingState) {
+                if (trackingState.current != null) {
+                  _currentLocation = LatLng(
+                    trackingState.current!.latitude,
+                    trackingState.current!.longitude,
                   );
-                },
-              );
-            },
-          ),
+                }
 
-          // Floating Reminder Card
-          BlocBuilder<ReminderBloc, ReminderState>(
-            builder: (context, reminderState) {
-              final reminder = reminderState.active;
-              if (reminder == null) return const SizedBox.shrink();
+                return BlocBuilder<ReminderBloc, ReminderState>(
+                  builder: (context, reminderState) {
+                    final reminder = reminderState.active;
 
-              return Positioned(
-                top: 50,
-                left: 16,
-                right: 16,
-                child: GestureDetector(
-                  onTap: () => _showReminderDetails(reminder),
-                  child: Card(
-                    elevation: 8,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.alarm, color: Colors.orange),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  reminder.label,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                    return FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter:
+                            _currentLocation ?? const LatLng(25.2828, 89.1077),
+                        initialZoom: 13,
+                        minZoom: 5,
+                        maxZoom: 18,
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'com.example.location_reminder',
+                        ),
+
+                        // Dotted line between current location and reminder
+                        if (_currentLocation != null && reminder != null)
+                          PolylineLayer(
+                            polylines: [
+                              Polyline(
+                                points: [
+                                  _currentLocation!,
+                                  LatLng(reminder.latitude, reminder.longitude),
+                                ],
+                                strokeWidth: 3,
+                                color: Colors.orange,
+                                borderColor: Colors.white,
+                                borderStrokeWidth: 1,
+                                pattern: const StrokePattern.dotted(
+                                  spacingFactor: 2,
                                 ),
-                              ),
-                              Icon(
-                                Icons.chevron_right,
-                                color: Colors.grey[400],
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          BlocBuilder<TrackingBloc, TrackingState>(
-                            builder: (context, trackingState) {
-                              print('🎴 [CARD] Building distance card');
-                              print(
-                                '🎴 [CARD] Distance: ${trackingState.distanceMeters}',
-                              );
-                              print(
-                                '🎴 [CARD] Status: ${trackingState.status}',
-                              );
-                              print(
-                                '🎴 [CARD] IsLive: ${trackingState.isLive}',
-                              );
 
-                              if (trackingState.distanceMeters != null) {
-                                final distance = trackingState.distanceMeters!;
-                                final distanceText = distance >= 1000
-                                    ? '${(distance / 1000).toStringAsFixed(1)} km'
-                                    : '${distance.toInt()} m';
+                        // Current location marker
+                        if (_currentLocation != null)
+                          MarkerLayer(
+                            markers: [
+                              Marker(
+                                point: _currentLocation!,
+                                width: 40,
+                                height: 40,
+                                child: _buildLocationMarker(
+                                  trackingState.isLive,
+                                ),
+                              ),
+                            ],
+                          ),
 
-                                print(
-                                  '🎴 [CARD] Showing distance: $distanceText',
-                                );
-
-                                return Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.arrow_downward,
-                                      size: 14,
-                                      color: Colors.blue,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      '$distanceText away',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                        fontWeight: FontWeight.w500,
-                                      ),
+                        // Reminder marker
+                        if (reminder != null)
+                          MarkerLayer(
+                            markers: [
+                              Marker(
+                                point: LatLng(
+                                  reminder.latitude,
+                                  reminder.longitude,
+                                ),
+                                width: 48,
+                                height: 48,
+                                alignment: Alignment.topCenter,
+                                child: Icon(
+                                  Icons.location_on,
+                                  color: Colors.red,
+                                  size: 48,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
                                     ),
                                   ],
-                                );
-                              }
-                              print('🎴 [CARD] Showing "Calculating..."');
-                              return Text(
-                                'Calculating...',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[600],
                                 ),
-                              );
-                            },
+                              ),
+                            ],
                           ),
-                        ],
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+
+            // Floating Reminder Card
+            BlocBuilder<ReminderBloc, ReminderState>(
+              builder: (context, reminderState) {
+                final reminder = reminderState.active;
+                if (reminder == null) return const SizedBox.shrink();
+
+                return Positioned(
+                  top: 16,
+                  left: 16,
+                  right: 16,
+                  child: GestureDetector(
+                    onTap: () => _showReminderDetails(reminder),
+                    child: Card(
+                      elevation: 8,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.alarm, color: Colors.orange),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    reminder.label,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right,
+                                  color: Colors.grey[400],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            BlocBuilder<TrackingBloc, TrackingState>(
+                              builder: (context, trackingState) {
+                                if (trackingState.distanceMeters != null) {
+                                  final distance =
+                                      trackingState.distanceMeters!;
+                                  final distanceText = distance >= 1000
+                                      ? '${(distance / 1000).toStringAsFixed(1)} km'
+                                      : '${distance.toInt()} m';
+
+                                  final gpsIcon = trackingState.isLive
+                                      ? Icons.gps_fixed
+                                      : Icons.gps_not_fixed;
+                                  final gpsColor = trackingState.isLive
+                                      ? Colors.green
+                                      : Colors.grey;
+
+                                  return Row(
+                                    children: [
+                                      Icon(gpsIcon, size: 14, color: gpsColor),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '$distanceText away',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      if (!trackingState.isLive) ...[
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '(cached)',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.grey[500],
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                }
+
+                                return Text(
+                                  'Calculating...',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
-        ],
+                );
+              },
+            ),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _showCreateReminderSheet,
