@@ -18,11 +18,13 @@ class ReminderState extends Equatable {
     ReminderStatus? status,
     DestinationReminder? active,
     String? errorMessage,
+    bool clearActive = false,
+    bool clearError = false,
   }) {
     return ReminderState(
       status: status ?? this.status,
-      active: active,
-      errorMessage: errorMessage,
+      active: clearActive ? null : (active ?? this.active),
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     );
   }
 

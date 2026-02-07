@@ -1,143 +1,344 @@
-// lib/features/reminder/presentation/pages/home_page.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
-import '../../../../core/di/injection_container.dart';
-import '../../../../core/notifications/notification_permission_bloc.dart';
-import '../bloc/location_bloc.dart';
-import '../bloc/reminder_bloc.dart';
-import '../bloc/tracking_bloc.dart';
-import '../widgets/map_view.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/reminder_bloc.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
+import 'package:location_reminder/features/reminder/presentation/widgets/location_picker_screen.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MultiBlocProvider(
-      providers: [
-        BlocProvider(create: (_) => sl<LocationBloc>()),
-        BlocProvider(
-          create: (_) => sl<ReminderBloc>()..add(const ReminderLoaded()),
-        ),
-        BlocProvider(create: (_) => sl<TrackingBloc>()),
-        BlocProvider(
-          create: (_) =>
-              sl<NotificationPermissionBloc>()
-                ..add(const NotificationPermissionChecked()),
-        ),
-      ],
-      child: const _HomeView(),
-    );
+    return const HomeView();
   }
 }
 
-class _HomeView extends StatefulWidget {
-  const _HomeView();
+class HomeView extends StatefulWidget {
+  const HomeView({super.key});
 
   @override
-  State<_HomeView> createState() => _HomeViewState();
+  State<HomeView> createState() => _HomeViewState();
 }
 
-class _HomeViewState extends State<_HomeView> {
-  final _labelController = TextEditingController(text: 'Narayanganj');
-  final _latController = TextEditingController();
-  final _lngController = TextEditingController();
-  final _radiusController = TextEditingController(text: '200');
+class _HomeViewState extends State<HomeView> {
+  late MapController _mapController;
+  LatLng? _selectedLocation;
+  LatLng? _currentLocation;
 
   @override
-  void didChangeDependencies() {
+  void initState() {
+    super.initState();
+    _mapController = MapController();
+
+    // Start location tracking on app start
     context.read<TrackingBloc>().add(const TrackingStartedForLocationOnly());
-    super.didChangeDependencies();
+    context.read<ReminderBloc>().add(const ReminderLoaded());
   }
 
   @override
   void dispose() {
-    _labelController.dispose();
-    _latController.dispose();
-    _lngController.dispose();
-    _radiusController.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Location Reminder'), centerTitle: true),
-      body: Column(
-        children: [
-          // ==================== MAP SECTION ====================
-          BlocBuilder<TrackingBloc, TrackingState>(
-            buildWhen: (previous, current) {
-              print(
-                '🔵 [UI] buildWhen - prev: ${previous.current?.timestamp}, curr: ${current.current?.timestamp}',
-              );
-              print('🔵 [UI] Are they equal? ${previous == current}');
-              return previous !=
-                  current; // Only rebuild if states are different
-            },
-            builder: (context, state) {
-              if (state.current == null ||
-                  state.status == TrackingStatus.loading) {
-                return Container(
-                  height: 250,
-                  color: Colors.grey[200],
-                  child: const Center(child: CircularProgressIndicator()),
-                );
-              }
-              if (state.status == TrackingStatus.failure) {
-                return Container(
-                  height: 250,
-                  color: Colors.grey[200],
-                  child: Center(
-                    child: Text(
-                      'Error loading map:\n${state.errorMessage}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
+  // ==================== SHOW CREATE REMINDER BOTTOM SHEET ====================
+  void _showCreateReminderSheet() {
+    final labelController = TextEditingController();
+    final distanceController = TextEditingController(text: '100');
+    LatLng? pickedLocation;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  const Icon(Icons.add_alarm, color: Colors.orange, size: 28),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Create Location Alarm',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(),
+              const SizedBox(height: 16),
+
+              // Label Field
+              TextField(
+                controller: labelController,
+                decoration: InputDecoration(
+                  labelText: 'Alarm Name',
+                  hintText: 'e.g., Home, Office, School',
+                  prefixIcon: const Icon(Icons.label),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Location Field (Read-only, opens picker)
+              InkWell(
+                onTap: () async {
+                  final result = await Navigator.push<LatLng>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => LocationPickerScreen(
+                        initialLocation: pickedLocation ?? _currentLocation,
+                      ),
+                    ),
+                  );
+
+                  if (result != null) {
+                    setSheetState(() {
+                      pickedLocation = result;
+                    });
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on, color: Colors.red),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Location',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              pickedLocation != null
+                                  ? '${pickedLocation!.latitude.toStringAsFixed(4)}, ${pickedLocation!.longitude.toStringAsFixed(4)}'
+                                  : 'Tap to select location',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: pickedLocation != null
+                                    ? Colors.black
+                                    : Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Distance Field
+              TextField(
+                controller: distanceController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Alert Distance (meters)',
+                  hintText: 'e.g., 100',
+                  prefixIcon: const Icon(Icons.notifications_active),
+                  suffixText: 'm',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Save Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    final label = labelController.text.trim();
+                    final distance = double.tryParse(distanceController.text);
+
+                    if (label.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('⚠️ Please enter an alarm name'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+
+                    if (pickedLocation == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('⚠️ Please select a location'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+
+                    if (distance == null || distance <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('⚠️ Please enter a valid distance'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+
+                    Navigator.pop(context); // Close bottom sheet
+
+                    // Save reminder
+                    _saveReminder(label, distance, pickedLocation!);
+                  },
+                  icon: const Icon(Icons.save),
+                  label: const Text('Create Alarm'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                );
-              }
-              if (state.current != null) {
-                return Container(
-                  height: 250,
-                  color: Colors.grey[200],
-                  child: MapView(
-                    isLive: state.isLive,
-                    currentLocation: state.current,
-                    activeReminder: state.activeReminder,
-                  ),
-                );
-              }
-              return Center(
-                child: Text(
-                  'Unexpected state: ${state.status}',
-                  style: const TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ==================== SAVE REMINDER ====================
+  void _saveReminder(String label, double distance, LatLng location) {
+    print('💾 [HOME] Saving reminder: $label, distance: $distance');
+
+    final reminder = DestinationReminder(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      label: label,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      triggerDistanceMeters: distance,
+      createdAt: DateTime.now(),
+      isActive: true,
+    );
+
+    print(
+      '💾 [HOME] Reminder created: ${reminder.label} at (${reminder.latitude}, ${reminder.longitude})',
+    );
+    print('💾 [HOME] Dispatching ReminderSaved event...');
+    context.read<ReminderBloc>().add(ReminderSaved(reminder));
+
+    print('💾 [HOME] Dispatching TrackingStarted event...');
+    context.read<TrackingBloc>().add(const TrackingStarted());
+
+    // Move map to reminder location
+    _mapController.move(location, 15);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✅ Alarm "$label" created and tracking started!'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+
+    print('✅ [HOME] Reminder saved successfully');
+  }
+
+  // ==================== SHOW REMINDER DETAILS ====================
+  void _showReminderDetails(DestinationReminder reminder) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.alarm, color: Colors.orange),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                reminder.label,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildDetailRow(
+              Icons.location_on,
+              'Location',
+              '${reminder.latitude.toStringAsFixed(4)}, ${reminder.longitude.toStringAsFixed(4)}',
+            ),
+            const SizedBox(height: 8),
+            _buildDetailRow(
+              Icons.notifications_active,
+              'Alert Distance',
+              '${reminder.triggerDistanceMeters.toInt()}m',
+            ),
+            const SizedBox(height: 8),
+            _buildDetailRow(
+              Icons.access_time,
+              'Created',
+              _formatDateTime(reminder.createdAt),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              context.read<ReminderBloc>().add(const ReminderCleared());
+              context.read<TrackingBloc>().add(const TrackingStopped());
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('✅ Alarm deleted successfully'),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: 2),
                 ),
               );
             },
-          ),
-
-          // ==================== SCROLLABLE CONTENT ====================
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // -------- Destination Form --------
-                _buildSectionTitle('Set Destination'),
-                const SizedBox(height: 12),
-                _buildDestinationForm(),
-
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-
-                // -------- Tracking Controls --------
-                _buildSectionTitle('Live Tracking'),
-                const SizedBox(height: 12),
-                _buildTrackingControls(),
-              ],
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -145,170 +346,246 @@ class _HomeViewState extends State<_HomeView> {
     );
   }
 
-  // ==================== HELPER WIDGETS ====================
-
-  Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-    );
-  }
-
-  Widget _buildDestinationForm() {
-    return Column(
+  Widget _buildDetailRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          controller: _labelController,
-          decoration: const InputDecoration(
-            labelText: 'Label',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.label),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _latController,
-                decoration: const InputDecoration(
-                  labelText: 'Latitude',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _lngController,
-                decoration: const InputDecoration(
-                  labelText: 'Longitude',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        TextField(
-          controller: _radiusController,
-          decoration: const InputDecoration(
-            labelText: 'Radius (meters)',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.radio_button_unchecked),
-          ),
-          keyboardType: TextInputType.number,
-        ),
-        const SizedBox(height: 16),
-
-        // Save/Clear Buttons
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  // TODO: Validate and save reminder
-                },
-                icon: const Icon(Icons.save),
-                label: const Text('Save Reminder'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  // TODO: Clear reminder
-                },
-                icon: const Icon(Icons.clear),
-                label: const Text('Clear'),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // Active Reminder Display
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.blue[200]!),
-          ),
-          child: const Text(
-            'Active Reminder: (none)',
-            style: TextStyle(fontWeight: FontWeight.w500),
-          ),
-          // TODO: Replace with BlocBuilder<ReminderBloc, ReminderState>
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTrackingControls() {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  // TODO: Start tracking
-                },
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start Tracking'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: null, // TODO: Enable when tracking
-                icon: const Icon(Icons.stop),
-                label: const Text('Stop'),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // Tracking Info Display
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey[300]!),
-          ),
-          child: const Column(
+        Icon(icon, size: 20, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Status: Idle',
-                style: TextStyle(fontWeight: FontWeight.w500),
+                label,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
-              SizedBox(height: 4),
-              Text('Distance: -'),
-              Text('Inside Radius: -'),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ),
       ],
     );
   }
-}
 
-Widget _buildReminderOrNull() {
-  return const Text('No active reminder');
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Map
+          BlocBuilder<TrackingBloc, TrackingState>(
+            builder: (context, trackingState) {
+              // Update current location
+              if (trackingState.current != null) {
+                _currentLocation = LatLng(
+                  trackingState.current!.latitude,
+                  trackingState.current!.longitude,
+                );
+              }
+
+              return BlocBuilder<ReminderBloc, ReminderState>(
+                builder: (context, reminderState) {
+                  final reminder = reminderState.active;
+
+                  return FlutterMap(
+                    mapController: _mapController,
+                    options: MapOptions(
+                      initialCenter:
+                          _currentLocation ?? const LatLng(25.2828, 89.1077),
+                      initialZoom: 13,
+                      minZoom: 5,
+                      maxZoom: 18,
+                      // No onTap - removed accidental selection
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'com.example.location_reminder',
+                      ),
+
+                      // Current location marker
+                      if (_currentLocation != null)
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _currentLocation!,
+                              width: 40,
+                              height: 40,
+                              child: const Icon(
+                                Icons.my_location,
+                                color: Colors.blue,
+                                size: 30,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                      // Reminder marker
+                      if (reminder != null)
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: LatLng(
+                                reminder.latitude,
+                                reminder.longitude,
+                              ),
+                              width: 40,
+                              height: 40,
+                              child: const Icon(
+                                Icons.location_on,
+                                color: Colors.red,
+                                size: 40,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                      // Trigger radius circle
+                      if (reminder != null)
+                        CircleLayer(
+                          circles: [
+                            CircleMarker(
+                              point: LatLng(
+                                reminder.latitude,
+                                reminder.longitude,
+                              ),
+                              radius: reminder.triggerDistanceMeters,
+                              useRadiusInMeter: true,
+                              color: Colors.orange.withOpacity(0.2),
+                              borderColor: Colors.orange,
+                              borderStrokeWidth: 2,
+                            ),
+                          ],
+                        ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+
+          // Floating Reminder Card
+          BlocBuilder<ReminderBloc, ReminderState>(
+            builder: (context, reminderState) {
+              final reminder = reminderState.active;
+              if (reminder == null) return const SizedBox.shrink();
+
+              return Positioned(
+                top: 50,
+                left: 16,
+                right: 16,
+                child: GestureDetector(
+                  onTap: () => _showReminderDetails(reminder),
+                  child: Card(
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.alarm, color: Colors.orange),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  reminder.label,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.chevron_right,
+                                color: Colors.grey[400],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          BlocBuilder<TrackingBloc, TrackingState>(
+                            builder: (context, trackingState) {
+                              print('🎴 [CARD] Building distance card');
+                              print(
+                                '🎴 [CARD] Distance: ${trackingState.distanceMeters}',
+                              );
+                              print(
+                                '🎴 [CARD] Status: ${trackingState.status}',
+                              );
+                              print(
+                                '🎴 [CARD] IsLive: ${trackingState.isLive}',
+                              );
+
+                              if (trackingState.distanceMeters != null) {
+                                final distance = trackingState.distanceMeters!;
+                                final distanceText = distance >= 1000
+                                    ? '${(distance / 1000).toStringAsFixed(1)} km'
+                                    : '${distance.toInt()} m';
+
+                                print(
+                                  '🎴 [CARD] Showing distance: $distanceText',
+                                );
+
+                                return Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.arrow_downward,
+                                      size: 14,
+                                      color: Colors.blue,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$distanceText away',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[700],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }
+                              print('🎴 [CARD] Showing "Calculating..."');
+                              return Text(
+                                'Calculating...',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showCreateReminderSheet,
+        icon: const Icon(Icons.add_alarm),
+        label: const Text('Create Alarm'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
 }

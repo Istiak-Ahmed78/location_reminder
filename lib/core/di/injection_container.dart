@@ -71,7 +71,7 @@ Future<void> initDependencies() async {
 
   // Repository
   sl.registerLazySingleton<ReminderRepository>(
-    () => ReminderRepositoryImpl(sl()),
+    () => ReminderRepositoryImpl(localDataSource: sl()), // ← FIXED
   );
 
   // Use cases

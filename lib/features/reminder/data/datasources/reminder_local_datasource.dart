@@ -1,7 +1,8 @@
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/error/exceptions.dart';
 import '../../domain/entities/destination_reminder.dart';
+import '../models/destination_reminder_model.dart';
 
 abstract class ReminderLocalDataSource {
   Future<void> saveActiveReminder(DestinationReminder reminder);
@@ -17,31 +18,33 @@ class ReminderLocalDataSourceImpl implements ReminderLocalDataSource {
 
   @override
   Future<void> saveActiveReminder(DestinationReminder reminder) async {
-    final map = {
-      'label': reminder.label,
-      'lat': reminder.latitude,
-      'lng': reminder.longitude,
-      'radius': reminder.radiusMeters,
-    };
-    await prefs.setString(_key, jsonEncode(map));
+    try {
+      final model = DestinationReminderModel.fromEntity(reminder);
+      final jsonString = model.toJsonString();
+      await prefs.setString(_key, jsonString);
+    } catch (e) {
+      throw CacheException('Failed to save reminder: $e');
+    }
   }
 
   @override
   Future<DestinationReminder?> getActiveReminder() async {
-    final raw = prefs.getString(_key);
-    if (raw == null) return null;
+    try {
+      final jsonString = prefs.getString(_key);
+      if (jsonString == null) return null;
 
-    final map = jsonDecode(raw) as Map<String, dynamic>;
-    return DestinationReminder(
-      label: (map['label'] as String?) ?? 'Destination',
-      latitude: (map['lat'] as num).toDouble(),
-      longitude: (map['lng'] as num).toDouble(),
-      radiusMeters: (map['radius'] as num).toDouble(),
-    );
+      return DestinationReminderModel.fromJsonString(jsonString);
+    } catch (e) {
+      throw CacheException('Failed to get reminder: $e');
+    }
   }
 
   @override
   Future<void> clearActiveReminder() async {
-    await prefs.remove(_key);
+    try {
+      await prefs.remove(_key);
+    } catch (e) {
+      throw CacheException('Failed to clear reminder: $e');
+    }
   }
 }

@@ -27,7 +27,7 @@ class MapView extends StatelessWidget {
             initialCenter: currentLocation != null
                 ? LatLng(currentLocation!.latitude, currentLocation!.longitude)
                 : const LatLng(23.685, 90.3563),
-            initialZoom: 15, // Increased zoom for better view
+            initialZoom: 15,
           ),
           children: [
             TileLayer(
@@ -41,7 +41,7 @@ class MapView extends StatelessWidget {
                 circles: [
                   CircleMarker(
                     point: LatLng(destination.latitude, destination.longitude),
-                    radius: destination.radiusMeters,
+                    radius: destination.triggerDistanceMeters, // ← FIXED
                     useRadiusInMeter: true,
                     color: Colors.blue.withOpacity(0.3),
                     borderColor: Colors.blue,

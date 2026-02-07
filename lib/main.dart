@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
-import 'core/di/injection_container.dart';
-import 'features/reminder/presentation/pages/home_page.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:location_reminder/core/di/injection_container.dart' as di;
+import 'package:location_reminder/features/reminder/presentation/bloc/reminder_bloc.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
+import 'package:location_reminder/features/reminder/presentation/pages/home_page.dart';
 
-Future<void> main() async {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initDependencies();
+
+  // Initialize dependency injection
+  await di.initDependencies(); // ← Changed from init() to initDependencies()
+
   runApp(const MyApp());
 }
 
@@ -13,11 +19,20 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Location Reminder',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true),
-      home: const HomePage(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<ReminderBloc>(create: (context) => di.sl<ReminderBloc>()),
+        BlocProvider<TrackingBloc>(create: (context) => di.sl<TrackingBloc>()),
+      ],
+      child: MaterialApp(
+        title: 'Location Reminder',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
+          useMaterial3: true,
+        ),
+        home: const HomePage(),
+      ),
     );
   }
 }

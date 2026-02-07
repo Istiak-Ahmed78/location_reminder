@@ -67,10 +67,16 @@ class ReminderBloc extends Bloc<ReminderEvent, ReminderState> {
     ReminderCleared event,
     Emitter<ReminderState> emit,
   ) async {
-    emit(state.copyWith(status: ReminderStatus.loading, errorMessage: null));
+    emit(state.copyWith(status: ReminderStatus.loading, clearError: true));
     try {
       await clearActiveReminder(const NoParams());
-      emit(state.copyWith(status: ReminderStatus.ready, active: null));
+      emit(
+        state.copyWith(
+          status: ReminderStatus.ready,
+          clearActive: true,
+          clearError: true,
+        ),
+      );
     } catch (e) {
       emit(
         state.copyWith(
