@@ -1,5 +1,7 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get_it/get_it.dart';
+import 'package:http/http.dart' as http;
 import 'package:location_reminder/core/notifications/local_notifications_service.dart';
 import 'package:location_reminder/core/notifications/notification_permission_bloc.dart';
 import 'package:location_reminder/features/reminder/domain/usecases/get_last_cached_location.dart';
@@ -25,12 +27,23 @@ import '../../features/reminder/domain/usecases/clear_active_reminder.dart';
 import '../../features/reminder/domain/usecases/get_active_reminder.dart';
 import '../../features/reminder/presentation/bloc/reminder_bloc.dart';
 
+// ========== ETA IMPORTS (NEW) ==========
+import '../../features/reminder/data/services/openrouteservice_client.dart';
+import '../../features/reminder/data/services/eta_cache_service.dart';
+import '../../features/reminder/domain/usecases/calculate_local_eta.dart';
+import '../../features/reminder/domain/usecases/fetch_api_eta.dart';
+import '../../features/reminder/domain/usecases/get_blended_eta.dart';
+import '../../features/reminder/presentation/bloc/eta_bloc.dart';
+
 final sl = GetIt.instance;
 
 Future<void> initDependencies() async {
   // ========== Core ==========
   final prefs = await SharedPreferences.getInstance();
   sl.registerLazySingleton<SharedPreferences>(() => prefs);
+
+  // HTTP Client (for API calls)
+  sl.registerLazySingleton(() => http.Client());
 
   // ========== Location Feature ==========
 
@@ -71,7 +84,7 @@ Future<void> initDependencies() async {
 
   // Repository
   sl.registerLazySingleton<ReminderRepository>(
-    () => ReminderRepositoryImpl(localDataSource: sl()), // ← FIXED
+    () => ReminderRepositoryImpl(localDataSource: sl()),
   );
 
   // Use cases
@@ -88,13 +101,43 @@ Future<void> initDependencies() async {
     ),
   );
 
-  // ========== Tracking Bloc ==========
+  // ========== ETA FEATURE (NEW) ==========
+
+  // Services
+  sl.registerLazySingleton(
+    () => OpenRouteServiceClient(
+      apiKey: dotenv.env['OPENROUTE_API_KEY'] ?? '', // ← Use dotenv here
+      httpClient: sl(),
+    ),
+  );
+
+  sl.registerLazySingleton(() => ETACacheService(sl()));
+
+  // Use Cases
+  sl.registerLazySingleton(() => CalculateLocalETA());
+  sl.registerLazySingleton(
+    () => FetchAPIETA(apiClient: sl(), cacheService: sl()),
+  );
+  sl.registerLazySingleton(() => GetBlendedETA());
+
+  // BLoC
+  sl.registerFactory(
+    () => ETABloc(
+      calculateLocalETA: sl(),
+      fetchAPIETA: sl(),
+      getBlendedETA: sl(),
+      cacheService: sl(),
+    ),
+  );
+
+  // ========== Tracking Bloc (UPDATED) ==========
   sl.registerFactory(
     () => TrackingBloc(
       watchPosition: sl(),
       getActiveReminder: sl(),
       notifications: sl(),
       getLastCachedLocation: sl(),
+      etaBloc: sl(), // ← NEW: Pass ETABloc
     ),
   );
 

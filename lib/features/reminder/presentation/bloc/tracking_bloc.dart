@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/eta_event.dart';
 
 import '../../../../core/notifications/local_notifications_service.dart';
 import '../../../../core/usecase/usecase.dart';
@@ -11,6 +12,7 @@ import '../../domain/usecases/get_active_reminder.dart';
 import '../../domain/usecases/get_last_cached_location.dart';
 import '../../domain/usecases/watch_position.dart';
 import '../../domain/usecases/watch_position_params.dart';
+import 'eta_bloc.dart'; // ← NEW IMPORT
 
 part 'tracking_event.dart';
 part 'tracking_state.dart';
@@ -21,6 +23,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   final GetActiveReminder getActiveReminder;
   final GetLastCachedLocation getLastCachedLocation;
   final LocalNotificationsService notifications;
+  final ETABloc etaBloc; // ← NEW: ETABloc dependency
 
   StreamSubscription<UserLocation>? _locationSubscription;
   StreamSubscription<ServiceStatus>? _serviceStatusSubscription;
@@ -35,6 +38,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     required this.getActiveReminder,
     required this.notifications,
     required this.getLastCachedLocation,
+    required this.etaBloc, // ← NEW: Required parameter
   }) : super(const TrackingState.initial()) {
     on<TrackingStarted>(_onStarted);
     on<TrackingStopped>(_onStopped);
@@ -73,6 +77,15 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
       _resetTrackingState();
       await _cancelAllSubscriptions();
+
+      // ========== NEW: Start ETA calculation ==========
+      etaBloc.add(
+        ETACalculationStarted(
+          destinationLat: reminder.latitude,
+          destinationLon: reminder.longitude,
+        ),
+      );
+      // ================================================
 
       await _startTrackingWithSettings(
         distanceFilter: 10,
@@ -153,6 +166,10 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     _resetTrackingState();
     _isLocationOnlyMode = false;
 
+    // ========== NEW: Stop ETA calculation ==========
+    etaBloc.add(const ETACalculationStopped());
+    // ===============================================
+
     emit(
       state.copyWith(
         status: TrackingStatus.idle,
@@ -189,6 +206,17 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
       _wasInsideRadius = isInsideRadius;
       _lastDistance = distance;
+
+      // ========== NEW: Update ETA with new location ==========
+      etaBloc.add(
+        ETALocationUpdated(
+          currentLat: location.latitude,
+          currentLon: location.longitude,
+          speed: location.speed ?? 0.0, // Use 0.0 if speed is null
+          distance: distance,
+        ),
+      );
+      // =======================================================
 
       emit(
         state.copyWith(

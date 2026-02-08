@@ -3,8 +3,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/reminder_bloc.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/eta_bloc.dart';
+import 'package:location_reminder/features/reminder/domain/entities/eta_result.dart';
 import 'package:location_reminder/features/reminder/presentation/widgets/location_picker_screen.dart';
 
 class HomePage extends StatelessWidget {
@@ -411,13 +414,30 @@ class _HomeViewState extends State<HomeView> {
     }
   }
 
+  // ==================== FORMAT ETA FROM SECONDS ====================
+  String _formatETA(int seconds) {
+    if (seconds < 60) {
+      return '< 1m';
+    }
+
+    final duration = Duration(seconds: seconds);
+
+    if (duration.inHours > 0) {
+      final hours = duration.inHours;
+      final minutes = duration.inMinutes.remainder(60);
+      return '${hours}h ${minutes}m';
+    } else {
+      return '${duration.inMinutes}m';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Stack(
           children: [
-            // Map
+            // ==================== MAP ====================
             BlocBuilder<TrackingBloc, TrackingState>(
               builder: (context, trackingState) {
                 if (trackingState.current != null) {
@@ -516,7 +536,7 @@ class _HomeViewState extends State<HomeView> {
               },
             ),
 
-            // Floating Reminder Card
+            // ==================== FLOATING REMINDER CARD ====================
             BlocBuilder<ReminderBloc, ReminderState>(
               builder: (context, reminderState) {
                 final reminder = reminderState.active;
@@ -538,6 +558,7 @@ class _HomeViewState extends State<HomeView> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // Header
                             Row(
                               children: [
                                 const Icon(Icons.alarm, color: Colors.orange),
@@ -557,7 +578,9 @@ class _HomeViewState extends State<HomeView> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 12),
+
+                            // Distance Info
                             BlocBuilder<TrackingBloc, TrackingState>(
                               builder: (context, trackingState) {
                                 if (trackingState.distanceMeters != null) {
@@ -610,6 +633,171 @@ class _HomeViewState extends State<HomeView> {
                                 );
                               },
                             ),
+
+                            // ==================== ETA DISPLAY ====================
+                            const SizedBox(height: 8),
+                            BlocBuilder<ETABloc, ETAState>(
+                              builder: (context, etaState) {
+                                // Show loading state
+                                if (etaState.isActive && etaState.eta == null) {
+                                  return Row(
+                                    children: [
+                                      const SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Calculating ETA...',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey[600],
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }
+
+                                // Show ETA if available
+                                if (etaState.isActive && etaState.eta != null) {
+                                  final eta = etaState.eta!;
+                                  final etaText = _formatETA(
+                                    eta.seconds,
+                                  ); // ← FIXED
+
+                                  // Determine icon and color based on source
+                                  final icon =
+                                      eta.source == ETASource.api ||
+                                          eta.source == ETASource.blended
+                                      ? Icons.directions_car
+                                      : Icons.straighten;
+                                  final color =
+                                      eta.source == ETASource.api ||
+                                          eta.source == ETASource.blended
+                                      ? Colors.blue
+                                      : Colors.orange;
+
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(icon, size: 14, color: color),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'ETA: $etaText',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[700],
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            eta.source == ETASource.api ||
+                                                    eta.source ==
+                                                        ETASource.blended
+                                                ? '(route)'
+                                                : '(direct)',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.grey[500],
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      // Show rate limit warning if needed
+                                      if (etaState.rateLimitStatus ==
+                                          RateLimitStatus.warning)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.warning_amber,
+                                                size: 12,
+                                                color: Colors.orange[700],
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                'API limit: ${etaState.remainingAPIRequests} left',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.orange[700],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      // Show rate limit exceeded
+                                      if (etaState.rateLimitStatus ==
+                                          RateLimitStatus.exceeded)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.error_outline,
+                                                size: 12,
+                                                color: Colors.red[700],
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                'API limit reached (using GPS)',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.red[700],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                }
+
+                                // Show error if any
+                                if (etaState.error != null) {
+                                  return Row(
+                                    children: [
+                                      Icon(
+                                        Icons.error_outline,
+                                        size: 14,
+                                        color: Colors.grey[500],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          etaState.error!,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[500],
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }
+
+                                return const SizedBox.shrink();
+                              },
+                            ),
+                            // =====================================
                           ],
                         ),
                       ),
