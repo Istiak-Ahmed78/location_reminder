@@ -32,26 +32,32 @@ class _HomeViewState extends State<HomeView> {
   late MapController _mapController;
   LatLng? _selectedLocation;
   LatLng? _currentLocation;
+@override
+void initState() {
+  super.initState();
+  _mapController = MapController();
 
-  @override
-  void initState() {
-    super.initState();
-    _mapController = MapController();
-
+  // Load reminder first
+  WidgetsBinding.instance.addPostFrameCallback((_) {
     context.read<ReminderBloc>().add(const ReminderLoaded());
-
-    Future.delayed(const Duration(milliseconds: 100), () {
+    
+    // Wait a bit for reminder to load, then check
+    Future.delayed(const Duration(milliseconds: 500), () {
       final reminderState = context.read<ReminderBloc>().state;
-
+      print('🚀 HomePage init: Reminder state - active: ${reminderState.active?.label}');
+      
       if (reminderState.active != null) {
+        print('🚀 Starting tracking with reminder...');
         context.read<TrackingBloc>().add(const TrackingStarted());
       } else {
+        print('🚀 Starting location-only tracking...');
         context.read<TrackingBloc>().add(
           const TrackingStartedForLocationOnly(),
         );
       }
     });
-  }
+  });
+}
 
   @override
   void dispose() {
@@ -524,13 +530,29 @@ class _HomeViewState extends State<HomeView> {
             // ==================== FLOATING REMINDER CARD ====================
             Builder(
               builder: (context) {
-                // Read reminder once, don't rebuild when it changes
-                final reminder = context.read<ReminderBloc>().state.active;
-                if (reminder == null) return const SizedBox.shrink();
+                // Get both reminders and tracking state
+                final reminderState = context.watch<ReminderBloc>().state;
+                final trackingState = context.watch<TrackingBloc>().state;
+                final etaState = context.watch<ETABloc>().state; // ← ADD THIS
+
+                final reminder = reminderState.active;
+
+                // Debug print
+                print(
+                  '🎯 HomePage: Building ETADisplayCard - reminder: ${reminder?.label}, trackingState.isLive: ${trackingState.isLive}, etaState.isActive: ${etaState.isActive}',
+                );
+
+                if (reminder == null) {
+                  print('🎯 HomePage: No active reminder, hiding card');
+                  return const SizedBox.shrink();
+                }
 
                 return ETADisplayCard(
                   reminder: reminder,
                   onTap: () => _showReminderDetails(reminder),
+                  distanceMeters: trackingState.distanceMeters,
+                  isLive: trackingState.isLive,
+                  etaState: etaState, // ← PASS ETA STATE
                 );
               },
             ),

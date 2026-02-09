@@ -86,48 +86,33 @@ class ETAState extends Equatable {
     return propsList;
   }
 
-  // ✅ FIXED: Proper hashCode that works with Bloc's distinct()
   @override
   int get hashCode {
-    // Combine all fields into a single hash
-    // Use bitwise operations to combine hashes properly
-    int hash = 0;
-    hash = hash ^ (eta?.hashCode ?? 0);
-    hash = hash ^ isActive.hashCode;
-    hash = hash ^ isFetchingAPI.hashCode;
-    hash = hash ^ isMoving.hashCode;
-    hash = hash ^ isMovingToward.hashCode;
-    hash = hash ^ (error?.hashCode ?? 0);
-    hash = hash ^ rateLimitStatus.hashCode;
-    hash = hash ^ remainingAPIRequests.hashCode;
-    hash = hash ^ (rateLimitResetAt?.hashCode ?? 0);
-    hash = hash ^ (lastAPICall?.hashCode ?? 0);
-    hash = hash ^ timestamp.hashCode;
-
-    print(
-      '🔍 ETAState.hashCode: $hash (timestamp: $timestamp, eta: ${eta?.seconds})',
+    return Object.hash(
+      eta?.seconds,
+      eta?.source,
+      isActive,
+      isFetchingAPI,
+      error,
+      rateLimitStatus,
+      timestamp.millisecondsSinceEpoch ~/ 1000, // Hash by second
     );
-    return hash;
   }
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
 
-    if (other is ETAState) {
-      print('🔍 ETAState == comparison:');
-      print(
-        '   this.timestamp: $timestamp vs other.timestamp: ${other.timestamp}',
-      );
-      print('   this.eta: ${eta?.seconds} vs other.eta: ${other.eta?.seconds}');
-      print('   this.hashCode: $hashCode vs other.hashCode: ${other.hashCode}');
-
-      final result = super == other;
-      print('   Result: $result');
-      return result;
-    }
-
-    return false;
+    return other is ETAState &&
+        other.eta?.seconds == eta?.seconds &&
+        other.eta?.source == eta?.source &&
+        other.isActive == isActive &&
+        other.isFetchingAPI == isFetchingAPI &&
+        other.error == error &&
+        other.rateLimitStatus == rateLimitStatus &&
+        other.timestamp.millisecondsSinceEpoch ~/ 1000 ==
+            timestamp.millisecondsSinceEpoch ~/
+                1000; // Compare by second, not millisecond
   }
 
   ETAState copyWith({

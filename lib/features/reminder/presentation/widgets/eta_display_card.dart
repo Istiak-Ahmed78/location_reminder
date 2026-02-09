@@ -1,22 +1,29 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:location_reminder/features/reminder/presentation/bloc/eta_bloc.dart';
-import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.dart';
-import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
-import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
 import 'package:location_reminder/features/reminder/domain/entities/eta_result.dart';
+import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.dart';
+import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
 
 class ETADisplayCard extends StatelessWidget {
-  // ← Changed to StatelessWidget
   final DestinationReminder reminder;
   final VoidCallback onTap;
+  final double? distanceMeters;
+  final bool isLive;
+  final ETAState etaState; // ← ADD THIS PARAMETER
 
-  const ETADisplayCard({Key? key, required this.reminder, required this.onTap})
-    : super(key: key);
+  const ETADisplayCard({
+    Key? key,
+    required this.reminder,
+    required this.onTap,
+    this.distanceMeters,
+    this.isLive = false,
+    required this.etaState, // ← ADD THIS
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    print('🎨 ETADisplayCard: build called');
+    print(
+      '🎨 ETADisplayCard: Building with reminder "${reminder.label}", ETA: ${etaState.eta?.seconds}s',
+    );
 
     return Positioned(
       top: 16,
@@ -54,66 +61,41 @@ class ETADisplayCard extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 // Distance Info
-                BlocBuilder<TrackingBloc, TrackingState>(
-                  builder: (context, trackingState) {
-                    if (trackingState.distanceMeters != null) {
-                      final distance = trackingState.distanceMeters!;
-                      final distanceText = distance >= 1000
-                          ? '${(distance / 1000).toStringAsFixed(1)} km'
-                          : '${distance.toInt()} m';
-
-                      final gpsIcon = trackingState.isLive
-                          ? Icons.gps_fixed
-                          : Icons.gps_not_fixed;
-                      final gpsColor = trackingState.isLive
-                          ? Colors.green
-                          : Colors.grey;
-
-                      return Row(
-                        children: [
-                          Icon(gpsIcon, size: 14, color: gpsColor),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$distanceText away',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[700],
-                              fontWeight: FontWeight.w500,
-                            ),
+                if (distanceMeters != null) ...[
+                  Row(
+                    children: [
+                      Icon(
+                        isLive ? Icons.gps_fixed : Icons.gps_not_fixed,
+                        size: 14,
+                        color: isLive ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatDistance(distanceMeters!),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (!isLive) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          '(cached)',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[500],
+                            fontStyle: FontStyle.italic,
                           ),
-                          if (!trackingState.isLive) ...[
-                            const SizedBox(width: 4),
-                            Text(
-                              '(cached)',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[500],
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
-                        ],
-                      );
-                    }
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
 
-                    return Text(
-                      'Calculating...',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    );
-                  },
-                ),
-
-                // ETA Display - Use BlocBuilder directly
-                const SizedBox(height: 8),
-                BlocBuilder<ETABloc, ETAState>(
-                  // ← Use BlocBuilder directly!
-                  builder: (context, etaState) {
-                    print(
-                      '🎨 ETADisplayCard: BlocBuilder called - eta: ${etaState.eta?.seconds}',
-                    );
-                    return _buildETADisplay(etaState);
-                  },
-                ),
+                // ETA Display
+                _buildETADisplay(etaState),
               ],
             ),
           ),
@@ -122,9 +104,17 @@ class ETADisplayCard extends StatelessWidget {
     );
   }
 
+  String _formatDistance(double meters) {
+    if (meters >= 1000) {
+      return '${(meters / 1000).toStringAsFixed(1)} km away';
+    } else {
+      return '${meters.toInt()} m away';
+    }
+  }
+
   Widget _buildETADisplay(ETAState etaState) {
     print(
-      '🎨 _buildETADisplay called - eta: ${etaState.eta?.seconds}, isActive: ${etaState.isActive}',
+      '🎨 ETADisplayCard: Building ETA display - eta: ${etaState.eta?.seconds}, isActive: ${etaState.isActive}',
     );
 
     if (etaState.error != null) {
@@ -182,22 +172,29 @@ class ETADisplayCard extends StatelessWidget {
     // Source icon
     IconData sourceIcon;
     Color sourceColor;
+    String sourceText;
+
     switch (eta.source) {
       case ETASource.localGPS:
         sourceIcon = Icons.gps_fixed;
         sourceColor = Colors.blue;
+        sourceText = 'GPS';
         break;
       case ETASource.api:
         sourceIcon = Icons.cloud;
         sourceColor = Colors.purple;
+        sourceText = 'API';
         break;
       case ETASource.blended:
         sourceIcon = Icons.merge_type;
         sourceColor = Colors.green;
+        sourceText = 'Enhanced';
         break;
       case ETASource.cached:
-        // TODO: Handle this case.
-        throw UnimplementedError();
+        sourceIcon = Icons.cached;
+        sourceColor = Colors.orange;
+        sourceText = 'Cached';
+        break;
     }
 
     return Row(
@@ -210,6 +207,23 @@ class ETADisplayCard extends StatelessWidget {
             fontSize: 12,
             color: Colors.grey[800],
             fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: sourceColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: sourceColor.withOpacity(0.3), width: 0.5),
+          ),
+          child: Text(
+            sourceText,
+            style: TextStyle(
+              fontSize: 10,
+              color: sourceColor,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
         if (etaState.isFetchingAPI) ...[

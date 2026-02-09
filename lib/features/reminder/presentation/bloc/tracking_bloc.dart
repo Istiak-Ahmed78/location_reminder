@@ -206,9 +206,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       _wasInsideRadius = isInsideRadius;
       _lastDistance = distance;
 
-      // ✅ ADD DEBUG LOG
       print(
-        '🟢 TrackingBloc: Sending ETALocationUpdated - Distance: ${distance.toStringAsFixed(2)}m, Speed: ${location.speed ?? 0.0}',
+        '📍 TrackingBloc: Location update - Distance: ${distance.toStringAsFixed(2)}m, Has Active Reminder: ${state.activeReminder != null}',
       );
 
       // ========== NEW: Update ETA with new location ==========
