@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:location_reminder/core/di/injection_container.dart'
+    as di; // ← ADD THIS IMPORT
 import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_event.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.dart';
@@ -32,32 +34,35 @@ class _HomeViewState extends State<HomeView> {
   late MapController _mapController;
   LatLng? _selectedLocation;
   LatLng? _currentLocation;
-@override
-void initState() {
-  super.initState();
-  _mapController = MapController();
 
-  // Load reminder first
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    context.read<ReminderBloc>().add(const ReminderLoaded());
-    
-    // Wait a bit for reminder to load, then check
-    Future.delayed(const Duration(milliseconds: 500), () {
-      final reminderState = context.read<ReminderBloc>().state;
-      print('🚀 HomePage init: Reminder state - active: ${reminderState.active?.label}');
-      
-      if (reminderState.active != null) {
-        print('🚀 Starting tracking with reminder...');
-        context.read<TrackingBloc>().add(const TrackingStarted());
-      } else {
-        print('🚀 Starting location-only tracking...');
-        context.read<TrackingBloc>().add(
-          const TrackingStartedForLocationOnly(),
+  @override
+  void initState() {
+    super.initState();
+    _mapController = MapController();
+
+    // Load reminder first
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ReminderBloc>().add(const ReminderLoaded());
+
+      // Wait a bit for reminder to load, then check
+      Future.delayed(const Duration(milliseconds: 500), () {
+        final reminderState = context.read<ReminderBloc>().state;
+        print(
+          '🚀 HomePage init: Reminder state - active: ${reminderState.active?.label}',
         );
-      }
+
+        if (reminderState.active != null) {
+          print('🚀 Starting tracking with reminder...');
+          context.read<TrackingBloc>().add(const TrackingStarted());
+        } else {
+          print('🚀 Starting location-only tracking...');
+          context.read<TrackingBloc>().add(
+            const TrackingStartedForLocationOnly(),
+          );
+        }
+      });
     });
-  });
-}
+  }
 
   @override
   void dispose() {
@@ -341,7 +346,10 @@ void initState() {
               Navigator.pop(dialogContext);
               context.read<ReminderBloc>().add(const ReminderCleared());
               context.read<TrackingBloc>().add(const TrackingStopped());
-              context.read<ETABloc>().add(const ETACalculationStopped());
+
+              // Get ETABloc from DI instead of context.read
+              final etaBloc = di.sl<ETABloc>();
+              etaBloc.add(const ETACalculationStopped());
 
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -413,7 +421,7 @@ void initState() {
         height: 40,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: Colors.grey.withOpacity(0.3),
+          color: const Color.fromARGB(255, 149, 142, 142).withOpacity(0.3),
         ),
         child: const Center(
           child: Icon(Icons.location_searching, color: Colors.grey, size: 24),
@@ -424,6 +432,13 @@ void initState() {
 
   @override
   Widget build(BuildContext context) {
+    // Get ETABloc from DI (SINGLETON instance)
+    final etaBloc = di.sl<ETABloc>();
+    print('🚨 ETABloc instance check: ${etaBloc.hashCode}');
+    print(
+      '🚨 ETABloc current state: isActive=${etaBloc.state.isActive}, eta=${etaBloc.state.eta?.seconds}',
+    );
+
     return Scaffold(
       body: SafeArea(
         child: Stack(
@@ -528,33 +543,40 @@ void initState() {
             ),
 
             // ==================== FLOATING REMINDER CARD ====================
-            Builder(
-              builder: (context) {
-                // Get both reminders and tracking state
-                final reminderState = context.watch<ReminderBloc>().state;
-                final trackingState = context.watch<TrackingBloc>().state;
-                final etaState = context.watch<ETABloc>().state; // ← ADD THIS
+            Positioned(
+              top: 16,
+              left: 16,
+              right: 16,
+              child: StreamBuilder<ETAState>(
+                stream: etaBloc.stream,
+                initialData: etaBloc.state,
+                builder: (context, snapshot) {
+                  final reminderState = context.watch<ReminderBloc>().state;
+                  final trackingState = context.watch<TrackingBloc>().state;
+                  final etaState = snapshot.data ?? ETAState.initial();
 
-                final reminder = reminderState.active;
+                  final reminder = reminderState.active;
 
-                // Debug print
-                print(
-                  '🎯 HomePage: Building ETADisplayCard - reminder: ${reminder?.label}, trackingState.isLive: ${trackingState.isLive}, etaState.isActive: ${etaState.isActive}',
-                );
+                  print(
+                    '🎯 StreamBuilder: reminder=${reminder?.label}, etaState.isActive=${etaState.isActive}, eta=${etaState.eta?.seconds}',
+                  );
 
-                if (reminder == null) {
-                  print('🎯 HomePage: No active reminder, hiding card');
-                  return const SizedBox.shrink();
-                }
+                  if (reminder == null) {
+                    return const SizedBox.shrink();
+                  }
 
-                return ETADisplayCard(
-                  reminder: reminder,
-                  onTap: () => _showReminderDetails(reminder),
-                  distanceMeters: trackingState.distanceMeters,
-                  isLive: trackingState.isLive,
-                  etaState: etaState, // ← PASS ETA STATE
-                );
-              },
+                  return ETADisplayCard(
+                    key: ValueKey(
+                      'eta_card_${etaState.eta?.seconds}_${etaState.isActive}_${DateTime.now().millisecondsSinceEpoch}',
+                    ),
+                    reminder: reminder,
+                    onTap: () => _showReminderDetails(reminder),
+                    distanceMeters: trackingState.distanceMeters,
+                    isLive: trackingState.isLive,
+                    etaState: etaState,
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -566,151 +588,6 @@ void initState() {
         backgroundColor: Colors.orange,
       ),
     );
-  }
-
-  // ==================== BUILD ETA DISPLAY ====================
-  Widget _buildETADisplay(ETAState etaState) {
-    print(
-      '🎨 _buildETADisplay called - eta: ${etaState.eta?.seconds}, isActive: ${etaState.isActive}',
-    );
-
-    // ✅ Show ETA FIRST (most important check)
-    if (etaState.eta != null) {
-      final eta = etaState.eta!;
-      final etaText = _formatETA(eta.seconds);
-
-      // Determine icon and color based on source
-      final icon =
-          eta.source == ETASource.api || eta.source == ETASource.blended
-          ? Icons.directions_car
-          : Icons.straighten;
-      final color =
-          eta.source == ETASource.api || eta.source == ETASource.blended
-          ? Colors.blue
-          : Colors.orange;
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
-              Text(
-                'ETA: $etaText',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[700],
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                eta.source == ETASource.api || eta.source == ETASource.blended
-                    ? '(route)'
-                    : '(direct)',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.grey[500],
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(eta.confidenceStars, style: const TextStyle(fontSize: 10)),
-            ],
-          ),
-          // Show rate limit warning if needed
-          if (etaState.rateLimitStatus == RateLimitStatus.warning)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.warning_amber,
-                    size: 12,
-                    color: Colors.orange[700],
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'API limit: ${etaState.remainingAPIRequests} left',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.orange[700],
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          // Show rate limit exceeded
-          if (etaState.rateLimitStatus == RateLimitStatus.exceeded)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.error_outline, size: 12, color: Colors.red[700]),
-                  const SizedBox(width: 4),
-                  Text(
-                    'API limit reached (using GPS)',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.red[700],
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      );
-    }
-
-    // ✅ Show loading ONLY if active and no ETA yet
-    if (etaState.isActive) {
-      return Row(
-        children: [
-          const SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Calculating ETA...',
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey[600],
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        ],
-      );
-    }
-
-    // ✅ Show error if any
-    if (etaState.error != null) {
-      return Row(
-        children: [
-          Icon(Icons.error_outline, size: 14, color: Colors.grey[500]),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              etaState.error!,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey[500],
-                fontStyle: FontStyle.italic,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      );
-    }
-
-    // ✅ Nothing to show
-    return const SizedBox.shrink();
   }
 
   // ==================== FORMAT ETA FROM SECONDS ====================

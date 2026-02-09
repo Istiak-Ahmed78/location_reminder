@@ -22,11 +22,23 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print('🏗️ MyApp: Starting app...');
+
     return MultiBlocProvider(
       providers: [
-        BlocProvider<ReminderBloc>(create: (context) => di.sl<ReminderBloc>()),
-        BlocProvider<TrackingBloc>(create: (context) => di.sl<TrackingBloc>()),
-        BlocProvider<ETABloc>(create: (context) => di.sl<ETABloc>()),
+        BlocProvider<ReminderBloc>(
+          create: (context) {
+            print('🏗️ Creating ReminderBloc');
+            return di.sl<ReminderBloc>();
+          },
+        ),
+        BlocProvider<TrackingBloc>(
+          create: (context) {
+            print('🏗️ Creating TrackingBloc');
+            return di.sl<TrackingBloc>();
+          },
+        ),
+        // REMOVE ETABloc from here - it's a singleton from DI
       ],
       child: MaterialApp(
         title: 'Location Reminder',

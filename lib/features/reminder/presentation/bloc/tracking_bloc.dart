@@ -210,7 +210,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         '📍 TrackingBloc: Location update - Distance: ${distance.toStringAsFixed(2)}m, Has Active Reminder: ${state.activeReminder != null}',
       );
 
-      // ========== NEW: Update ETA with new location ==========
+      // ========== CORRECT: Send location update to ETABloc ==========
+      // This is the correct way - send event to ETABloc
       etaBloc.add(
         ETALocationUpdated(
           currentLat: location.latitude,
@@ -231,7 +232,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         ),
       );
     } else {
-      // ✅ ADD DEBUG LOG
       print('⚠️ TrackingBloc: No active reminder, not sending ETA update');
 
       emit(

@@ -87,19 +87,6 @@ class ETAState extends Equatable {
   }
 
   @override
-  int get hashCode {
-    return Object.hash(
-      eta?.seconds,
-      eta?.source,
-      isActive,
-      isFetchingAPI,
-      error,
-      rateLimitStatus,
-      timestamp.millisecondsSinceEpoch ~/ 1000, // Hash by second
-    );
-  }
-
-  @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
 
@@ -109,10 +96,20 @@ class ETAState extends Equatable {
         other.isActive == isActive &&
         other.isFetchingAPI == isFetchingAPI &&
         other.error == error &&
-        other.rateLimitStatus == rateLimitStatus &&
-        other.timestamp.millisecondsSinceEpoch ~/ 1000 ==
-            timestamp.millisecondsSinceEpoch ~/
-                1000; // Compare by second, not millisecond
+        other.rateLimitStatus == rateLimitStatus;
+    // Removed timestamp comparison - causes unnecessary rebuilds
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+      eta?.seconds,
+      eta?.source,
+      isActive,
+      isFetchingAPI,
+      error,
+      rateLimitStatus,
+    );
   }
 
   ETAState copyWith({
@@ -128,7 +125,11 @@ class ETAState extends Equatable {
     DateTime? lastAPICall,
     bool clearError = false,
   }) {
-    return ETAState(
+    print(
+      '🔄 ETAState.copyWith called - isActive: ${isActive ?? this.isActive}',
+    );
+
+    final newState = ETAState(
       eta: eta ?? this.eta,
       isActive: isActive ?? this.isActive,
       isFetchingAPI: isFetchingAPI ?? this.isFetchingAPI,
@@ -139,8 +140,14 @@ class ETAState extends Equatable {
       remainingAPIRequests: remainingAPIRequests ?? this.remainingAPIRequests,
       rateLimitResetAt: rateLimitResetAt ?? this.rateLimitResetAt,
       lastAPICall: lastAPICall ?? this.lastAPICall,
-      timestamp: DateTime.now(), // ✅ Always create new timestamp
+      timestamp: DateTime.now(),
     );
+
+    print(
+      '   New state created: isActive=${newState.isActive}, eta=${newState.eta?.seconds}',
+    );
+
+    return newState;
   }
 }
 

@@ -22,82 +22,80 @@ class ETADisplayCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     print(
-      '🎨 ETADisplayCard: Building with reminder "${reminder.label}", ETA: ${etaState.eta?.seconds}s',
+      '🎨 ETADisplayCard: Building with reminder "${reminder.label}", ETA: ${etaState.eta?.seconds}s, isActive: ${etaState.isActive}',
     );
 
-    return Positioned(
-      top: 16,
-      left: 16,
-      right: 16,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Card(
-          elevation: 8,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header
-                Row(
-                  children: [
-                    const Icon(Icons.alarm, color: Colors.orange),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        reminder.label,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+    // Check if widget is mounted
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      print('🖼️ ETADisplayCard rendered in frame');
+    });
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Card(
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  const Icon(Icons.alarm, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      reminder.label,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Icon(Icons.chevron_right, color: Colors.grey[400]),
-                  ],
-                ),
-                const SizedBox(height: 12),
+                  ),
+                  Icon(Icons.chevron_right, color: Colors.grey[400]),
+                ],
+              ),
+              const SizedBox(height: 12),
 
-                // Distance Info
-                if (distanceMeters != null) ...[
-                  Row(
-                    children: [
-                      Icon(
-                        isLive ? Icons.gps_fixed : Icons.gps_not_fixed,
-                        size: 14,
-                        color: isLive ? Colors.green : Colors.grey,
+              // Distance Info
+              if (distanceMeters != null) ...[
+                Row(
+                  children: [
+                    Icon(
+                      isLive ? Icons.gps_fixed : Icons.gps_not_fixed,
+                      size: 14,
+                      color: isLive ? Colors.green : Colors.grey,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatDistance(distanceMeters!),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
                       ),
+                    ),
+                    if (!isLive) ...[
                       const SizedBox(width: 4),
                       Text(
-                        _formatDistance(distanceMeters!),
+                        '(cached)',
                         style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[700],
-                          fontWeight: FontWeight.w500,
+                          fontSize: 10,
+                          color: Colors.grey[500],
+                          fontStyle: FontStyle.italic,
                         ),
                       ),
-                      if (!isLive) ...[
-                        const SizedBox(width: 4),
-                        Text(
-                          '(cached)',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey[500],
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                      ],
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                ],
-
-                // ETA Display
-                _buildETADisplay(etaState),
+                  ],
+                ),
+                const SizedBox(height: 8),
               ],
-            ),
+
+              // ETA Display
+              _buildETADisplay(etaState),
+            ],
           ),
         ),
       ),

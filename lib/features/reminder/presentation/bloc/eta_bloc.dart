@@ -34,6 +34,14 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     required this.getBlendedETA,
     required this.cacheService,
   }) : super(ETAState.initial()) {
+    print('🏗️ ETABloc created: ${hashCode}');
+
+    // Add stream listener for debugging
+    stream.listen((state) {
+      print(
+        '📡 ETABloc STREAM EMITTED: isActive=${state.isActive}, eta=${state.eta?.seconds}, hashCode=${state.hashCode}',
+      );
+    });
     on<ETACalculationStarted>(_onCalculationStarted);
     on<ETALocationUpdated>(_onLocationUpdated);
     on<ETAAPIRefreshRequested>(_onAPIRefreshRequested);
@@ -53,16 +61,18 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     _destinationLat = event.destinationLat;
     _destinationLon = event.destinationLon;
 
-    // ✅ FIXED: Emit with isActive: true, eta: null
+    // Emit active state
     emit(
       state.copyWith(
-        isActive: true, // ← Must be true!
-        eta: null, // ← Clear old ETA
+        isActive: true, // ← Make sure this is true
+        eta: null,
         error: null,
       ),
     );
 
-    print('✅ ETABloc: State emitted - isActive: true, waiting for location...');
+    print(
+      '✅ ETABloc: State emitted - isActive: ${state.copyWith(isActive: true).isActive}',
+    );
 
     // Start periodic API refresh timer (every 10 minutes)
     _startAPIRefreshTimer();

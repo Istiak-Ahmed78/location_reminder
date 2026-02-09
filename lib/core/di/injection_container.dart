@@ -120,8 +120,8 @@ Future<void> initDependencies() async {
   );
   sl.registerLazySingleton(() => GetBlendedETA());
 
-  // BLoC
-  sl.registerFactory(
+  // Make sure ETABloc is registered as Factory (not Singleton)
+  sl.registerLazySingleton<ETABloc>(
     () => ETABloc(
       calculateLocalETA: sl(),
       fetchAPIETA: sl(),
@@ -130,14 +130,13 @@ Future<void> initDependencies() async {
     ),
   );
 
-  // ========== Tracking Bloc (UPDATED) ==========
   sl.registerFactory(
     () => TrackingBloc(
       watchPosition: sl(),
       getActiveReminder: sl(),
       notifications: sl(),
       getLastCachedLocation: sl(),
-      etaBloc: sl(), // ← NEW: Pass ETABloc
+      etaBloc: sl<ETABloc>(), // ← Now gets the SAME singleton instance
     ),
   );
 
