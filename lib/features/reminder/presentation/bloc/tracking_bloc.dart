@@ -180,7 +180,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     );
   }
 
-  /// Handles location updates from the stream
   Future<void> _onLocationUpdated(
     _TrackingLocationUpdated event,
     Emitter<TrackingState> emit,
@@ -207,12 +206,17 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       _wasInsideRadius = isInsideRadius;
       _lastDistance = distance;
 
+      // ✅ ADD DEBUG LOG
+      print(
+        '🟢 TrackingBloc: Sending ETALocationUpdated - Distance: ${distance.toStringAsFixed(2)}m, Speed: ${location.speed ?? 0.0}',
+      );
+
       // ========== NEW: Update ETA with new location ==========
       etaBloc.add(
         ETALocationUpdated(
           currentLat: location.latitude,
           currentLon: location.longitude,
-          speed: location.speed ?? 0.0, // Use 0.0 if speed is null
+          speed: location.speed ?? 0.0,
           distance: distance,
         ),
       );
@@ -228,6 +232,9 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         ),
       );
     } else {
+      // ✅ ADD DEBUG LOG
+      print('⚠️ TrackingBloc: No active reminder, not sending ETA update');
+
       emit(
         state.copyWith(
           current: location,
@@ -345,17 +352,21 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     }
   }
 
-  /// Starts tracking with specific settings for reminder mode
   Future<void> _startTrackingWithSettings({
     required double distanceFilter,
     required LocationAccuracy accuracy,
     required DestinationReminder reminder,
     required Emitter<TrackingState> emit,
   }) async {
+    print('🟠 TrackingBloc: _startTrackingWithSettings called');
+    print('   distanceFilter: $distanceFilter, accuracy: $accuracy');
+
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      print('🟠 TrackingBloc: Location service enabled: $serviceEnabled');
 
       if (!serviceEnabled) {
+        print('⚠️ TrackingBloc: Location service is disabled!');
         if (!emit.isDone) {
           emit(
             state.copyWith(
@@ -371,20 +382,32 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         return;
       }
 
+      print('🟠 TrackingBloc: Calling watchPosition...');
       final stream = await watchPosition(
         WatchPositionParams(distanceFilter: distanceFilter, accuracy: accuracy),
       );
+      print('🟠 TrackingBloc: watchPosition stream received');
 
       await _locationSubscription?.cancel();
+      print('🟠 TrackingBloc: Setting up location subscription...');
 
       _locationSubscription = stream.listen(
-        (location) => add(_TrackingLocationUpdated(location)),
+        (location) {
+          print('🟢 TrackingBloc: Location received from stream!');
+          add(_TrackingLocationUpdated(location));
+        },
         onError: (error) {
+          print('❌ TrackingBloc: Location stream error: $error');
           if (!isClosed) {
             add(const _TrackingServiceDisabled());
           }
         },
+        onDone: () {
+          print('⚠️ TrackingBloc: Location stream closed');
+        },
       );
+
+      print('✅ TrackingBloc: Location subscription set up successfully');
 
       if (!emit.isDone) {
         emit(
@@ -406,6 +429,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         );
       }
     } catch (e) {
+      print('❌ TrackingBloc: Error in _startTrackingWithSettings: $e');
       if (!emit.isDone) {
         emit(
           state.copyWith(

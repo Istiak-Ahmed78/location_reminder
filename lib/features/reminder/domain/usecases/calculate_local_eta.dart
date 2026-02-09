@@ -2,25 +2,22 @@ import 'dart:math';
 import '../entities/eta_result.dart';
 import '../entities/user_location.dart';
 
-/// Calculate ETA using local GPS speed data
+/// Calculates ETA using GPS data (speed + distance)
 class CalculateLocalETA {
-  static const int _maxSpeedHistory = 10;
-  static const double _minMovingSpeed = 0.5; // m/s (1.8 km/h)
+  // Constants for fallback speed estimation
+  static const double _averageWalkingSpeed = 1.4; // m/s (5 km/h)
+  static const double _averageDrivingSpeed = 13.9; // m/s (50 km/h)
+  static const double _speedThreshold = 2.0; // m/s - below this = walking
 
-  final List<_SpeedEntry> _speedHistory = [];
+  // Speed history for averaging
+  final List<double> _speedHistory = [];
+  static const int _maxSpeedHistorySize = 5;
 
-  /// Calculate ETA based on current location and speed history
   ETAResult call({
     required UserLocation currentLocation,
     required double destinationLat,
     required double destinationLon,
   }) {
-    // Add current speed to history
-    if (currentLocation.speed != null && currentLocation.speed! >= 0) {
-      _addSpeedToHistory(currentLocation.speed!, currentLocation.timestamp);
-    }
-
-    // Calculate distance
     final distance = _calculateDistance(
       currentLocation.latitude,
       currentLocation.longitude,
@@ -28,89 +25,70 @@ class CalculateLocalETA {
       destinationLon,
     );
 
-    // Check if user is moving
-    final averageSpeed = _getAverageSpeed();
+    // Get current speed (default to 0 if null)
+    final currentSpeed = currentLocation.speed ?? 0.0;
 
-    if (averageSpeed < _minMovingSpeed) {
-      // User is stationary or moving very slowly
-      return ETAResult(
-        seconds: 0,
-        source: ETASource.localGPS,
-        confidence: 0.0,
-        calculatedAt: DateTime.now(),
-        distanceMeters: distance,
-        currentSpeed: averageSpeed,
-      );
+    // Add to speed history
+    if (currentSpeed > 0) {
+      _speedHistory.add(currentSpeed);
+      if (_speedHistory.length > _maxSpeedHistorySize) {
+        _speedHistory.removeAt(0);
+      }
     }
 
-    // Calculate ETA
-    final etaSeconds = (distance / averageSpeed).round();
+    // Calculate average speed from history
+    final averageSpeed = _speedHistory.isNotEmpty
+        ? _speedHistory.reduce((a, b) => a + b) / _speedHistory.length
+        : 0.0;
 
-    // Calculate confidence based on speed stability
-    final confidence = _calculateConfidence();
+    // Determine effective speed for ETA calculation
+    double effectiveSpeed;
+    double confidence; // ✅ ADD confidence calculation
 
-    return ETAResult(
-      seconds: etaSeconds,
-      source: ETASource.localGPS,
-      confidence: confidence,
-      calculatedAt: DateTime.now(),
+    if (averageSpeed > 0.5) {
+      // User is moving, use average speed
+      effectiveSpeed = averageSpeed;
+      confidence = 0.9; // High confidence - using real speed data
+    } else if (currentSpeed > 0.5) {
+      // User just started moving, use current speed
+      effectiveSpeed = currentSpeed;
+      confidence = 0.7; // Medium confidence - limited data
+    } else {
+      // User is stationary, estimate based on distance
+      if (distance > 2000) {
+        // > 2km, assume driving
+        effectiveSpeed = _averageDrivingSpeed;
+        confidence = 0.4; // Low confidence - pure estimation
+      } else {
+        // <= 2km, assume walking
+        effectiveSpeed = _averageWalkingSpeed;
+        confidence = 0.5; // Low-medium confidence - reasonable assumption
+      }
+    }
+
+    // Calculate ETA in seconds
+    final etaSeconds = (distance / effectiveSpeed).round();
+
+    // Ensure minimum ETA of 1 minute if distance > 0
+    final finalEtaSeconds = etaSeconds < 60 && distance > 50 ? 60 : etaSeconds;
+
+    final result = ETAResult(
+      seconds: finalEtaSeconds,
       distanceMeters: distance,
-      currentSpeed: averageSpeed,
+      source: ETASource.localGPS,
+      calculatedAt: DateTime.now(),
+      currentSpeed: currentSpeed,
+      averageSpeed: averageSpeed,
+      confidence: confidence, // ✅ ADD THIS
+      timestamp: DateTime.now().millisecondsSinceEpoch,
     );
+    print(
+      '🔍 CalculateLocalETA: Created ETAResult - seconds: ${result.seconds}, timestamp: ${result.timestamp}, hashCode: ${result.hashCode}',
+    );
+    return result;
   }
 
-  /// Add speed to history
-  void _addSpeedToHistory(double speed, DateTime timestamp) {
-    _speedHistory.add(_SpeedEntry(speed, timestamp));
-
-    // Keep only last N entries
-    if (_speedHistory.length > _maxSpeedHistory) {
-      _speedHistory.removeAt(0);
-    }
-  }
-
-  /// Get average speed from history
-  double _getAverageSpeed() {
-    if (_speedHistory.isEmpty) return 0.0;
-
-    // Remove outliers (speeds that are too different from median)
-    final speeds = _speedHistory.map((e) => e.speed).toList()..sort();
-    final median = speeds[speeds.length ~/ 2];
-
-    final filteredSpeeds = speeds.where((speed) {
-      return (speed - median).abs() < median * 0.5; // Within 50% of median
-    }).toList();
-
-    if (filteredSpeeds.isEmpty) return 0.0;
-
-    return filteredSpeeds.reduce((a, b) => a + b) / filteredSpeeds.length;
-  }
-
-  /// Calculate confidence based on speed stability
-  double _calculateConfidence() {
-    if (_speedHistory.length < 3)
-      return 0.5; // Low confidence with few data points
-
-    final speeds = _speedHistory.map((e) => e.speed).toList();
-    final average = speeds.reduce((a, b) => a + b) / speeds.length;
-
-    // Calculate standard deviation
-    final variance =
-        speeds.map((speed) => pow(speed - average, 2)).reduce((a, b) => a + b) /
-        speeds.length;
-    final stdDev = sqrt(variance);
-
-    // Lower standard deviation = higher confidence
-    final coefficientOfVariation = average > 0 ? stdDev / average : 1.0;
-
-    // Convert to confidence (0.0 to 1.0)
-    // CV < 0.2 = high confidence, CV > 0.5 = low confidence
-    final confidence = (1.0 - coefficientOfVariation.clamp(0.0, 1.0)) * 0.8;
-
-    return confidence.clamp(0.3, 0.8); // Local GPS max confidence is 0.8
-  }
-
-  /// Calculate distance between two coordinates
+  /// Calculate distance between two coordinates using Haversine formula
   double _calculateDistance(
     double lat1,
     double lon1,
@@ -128,24 +106,16 @@ class CalculateLocalETA {
             sin(dLon / 2) *
             sin(dLon / 2);
 
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    final c = 2 * asin(sqrt(a));
     return earthRadius * c;
   }
 
   double _toRadians(double degrees) {
-    return degrees * pi / 180.0;
+    return degrees * (pi / 180.0);
   }
 
-  /// Clear speed history
+  /// Reset speed history (call when tracking stops)
   void reset() {
     _speedHistory.clear();
   }
-}
-
-/// Speed entry with timestamp
-class _SpeedEntry {
-  final double speed;
-  final DateTime timestamp;
-
-  _SpeedEntry(this.speed, this.timestamp);
 }

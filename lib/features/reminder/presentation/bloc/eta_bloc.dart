@@ -46,10 +46,23 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     ETACalculationStarted event,
     Emitter<ETAState> emit,
   ) async {
+    print(
+      '🟡 ETABloc: Calculation started - Destination: ${event.destinationLat}, ${event.destinationLon}',
+    );
+
     _destinationLat = event.destinationLat;
     _destinationLon = event.destinationLon;
 
-    emit(state.copyWith(isActive: true, error: null));
+    // ✅ FIXED: Emit with isActive: true, eta: null
+    emit(
+      state.copyWith(
+        isActive: true, // ← Must be true!
+        eta: null, // ← Clear old ETA
+        error: null,
+      ),
+    );
+
+    print('✅ ETABloc: State emitted - isActive: true, waiting for location...');
 
     // Start periodic API refresh timer (every 10 minutes)
     _startAPIRefreshTimer();
@@ -63,7 +76,14 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     ETALocationUpdated event,
     Emitter<ETAState> emit,
   ) async {
+    print(
+      '🟢 ETABloc: Location update received - Lat: ${event.currentLat}, Lon: ${event.currentLon}, Distance: ${event.distance}',
+    );
+
     if (!state.isActive || _destinationLat == null || _destinationLon == null) {
+      print(
+        '⚠️ ETABloc: Ignoring location update - isActive: ${state.isActive}, hasDestination: ${_destinationLat != null}',
+      );
       return;
     }
 
@@ -94,6 +114,10 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
       destinationLon: _destinationLon!,
     );
 
+    print(
+      '🟢 ETABloc: Local ETA calculated - ${localETA.seconds}s (${(localETA.seconds / 60).toStringAsFixed(1)}m)',
+    );
+
     // Get cached or current API ETA
     ETAResult? apiETA =
         state.eta?.source == ETASource.api ||
@@ -111,14 +135,37 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     final remaining = cacheService.getRemainingRequests();
     final rateLimitStatus = _getRateLimitStatus(remaining);
 
-    emit(
-      state.copyWith(
-        eta: finalETA,
-        isMoving: isMoving,
-        isMovingToward: isMovingToward,
-        rateLimitStatus: rateLimitStatus,
-        remainingAPIRequests: remaining,
-      ),
+    // ✅ ADD DEBUG PRINTS BEFORE EMIT
+    print('🔍 ETABloc: About to emit new state:');
+    print('   Current state timestamp: ${state.timestamp}');
+    print('   Current state eta: ${state.eta?.seconds}');
+    print('   Current state eta hashCode: ${state.eta?.hashCode}');
+    print('   New finalETA seconds: ${finalETA.seconds}');
+    print('   New finalETA timestamp: ${finalETA.timestamp}');
+    print('   New finalETA hashCode: ${finalETA.hashCode}');
+
+    final newState = state.copyWith(
+      eta: finalETA,
+      isActive: true,
+      isMoving: isMoving,
+      isMovingToward: isMovingToward,
+      rateLimitStatus: rateLimitStatus,
+      remainingAPIRequests: remaining,
+      clearError: true,
+    );
+
+    // ✅ ADD DEBUG PRINTS AFTER CREATING NEW STATE
+    print('🔍 ETABloc: New state created:');
+    print('   New state timestamp: ${newState.timestamp}');
+    print('   New state eta: ${newState.eta?.seconds}');
+    print('   New state eta hashCode: ${newState.eta.hashCode}');
+    print('   Old state == New state: ${state == newState}');
+    print('   About to call emit()...');
+
+    emit(newState);
+
+    print(
+      '✅ ETABloc: State emitted - ETA: ${finalETA.seconds}s, Source: ${finalETA.source}, isActive: true',
     );
 
     // Auto-refresh API if needed
@@ -144,7 +191,9 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
       return;
     }
 
-    emit(state.copyWith(isFetchingAPI: true));
+    emit(
+      state.copyWith(isFetchingAPI: true, isActive: true),
+    ); // ← Keep isActive true
 
     try {
       final apiETA = await fetchAPIETA(
@@ -169,6 +218,7 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
         emit(
           state.copyWith(
             eta: blendedETA,
+            isActive: true, // ← Keep isActive true
             isFetchingAPI: false,
             lastAPICall: DateTime.now(),
             rateLimitStatus: _getRateLimitStatus(remaining),
@@ -177,11 +227,17 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
         );
       } else {
         // API failed, continue with local
-        emit(state.copyWith(isFetchingAPI: false));
+        emit(
+          state.copyWith(isFetchingAPI: false, isActive: true),
+        ); // ← Keep isActive true
       }
     } catch (e) {
       emit(
-        state.copyWith(isFetchingAPI: false, error: 'Failed to fetch API data'),
+        state.copyWith(
+          isFetchingAPI: false,
+          isActive: true, // ← Keep isActive true
+          error: 'Failed to fetch API data',
+        ),
       );
     }
   }
@@ -191,6 +247,8 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     ETACalculationStopped event,
     Emitter<ETAState> emit,
   ) async {
+    print('🔴 ETABloc: Calculation stopped');
+
     _stopAPIRefreshTimer();
     calculateLocalETA.reset();
 
@@ -202,6 +260,8 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     ETAResetRequested event,
     Emitter<ETAState> emit,
   ) async {
+    print('🔴 ETABloc: Reset requested');
+
     _stopAPIRefreshTimer();
     calculateLocalETA.reset();
     _destinationLat = null;
@@ -224,7 +284,13 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     );
 
     if (cachedETA != null) {
-      emit(state.copyWith(eta: cachedETA, lastAPICall: cachedETA.calculatedAt));
+      emit(
+        state.copyWith(
+          eta: cachedETA,
+          isActive: true, // ← Keep isActive true
+          lastAPICall: cachedETA.calculatedAt,
+        ),
+      );
     }
   }
 

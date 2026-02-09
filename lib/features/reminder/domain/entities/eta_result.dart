@@ -20,14 +20,26 @@ class ETAResult extends Equatable {
   /// Current speed in m/s (if available)
   final double? currentSpeed;
 
-  const ETAResult({
+  /// Average speed in m/s (if available)
+  final double? averageSpeed;
+
+  /// Unique timestamp to force state changes
+  final int timestamp;
+
+  ETAResult({
     required this.seconds,
     required this.source,
     required this.confidence,
     required this.calculatedAt,
     required this.distanceMeters,
     this.currentSpeed,
-  });
+    this.averageSpeed,
+    int? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now().millisecondsSinceEpoch {
+    print(
+      '🔍 ETAResult created: seconds=$seconds, source=$source, timestamp=${this.timestamp}',
+    );
+  }
 
   /// Get formatted time string (e.g., "5 min", "45 sec")
   String get formattedTime {
@@ -70,14 +82,52 @@ class ETAResult extends Equatable {
   }
 
   @override
-  List<Object?> get props => [
-    seconds,
-    source,
-    confidence,
-    calculatedAt,
-    distanceMeters,
-    currentSpeed,
-  ];
+  List<Object?> get props {
+    return [
+      seconds,
+      source,
+      confidence,
+      calculatedAt,
+      distanceMeters,
+      currentSpeed,
+      averageSpeed,
+      timestamp,
+    ];
+  }
+
+  // ✅ ADD THIS: Override hashCode to match props
+  @override
+  int get hashCode {
+    return Object.hash(
+      seconds,
+      source,
+      confidence,
+      calculatedAt,
+      distanceMeters,
+      currentSpeed,
+      averageSpeed,
+      timestamp,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+
+    if (other is ETAResult) {
+      print('🔍 ETAResult == comparison:');
+      print(
+        '   this.timestamp: $timestamp vs other.timestamp: ${other.timestamp}',
+      );
+      print('   this.seconds: $seconds vs other.seconds: ${other.seconds}');
+
+      final result = super == other;
+      print('   Result: $result');
+      return result;
+    }
+
+    return false;
+  }
 
   ETAResult copyWith({
     int? seconds,
@@ -86,7 +136,14 @@ class ETAResult extends Equatable {
     DateTime? calculatedAt,
     double? distanceMeters,
     double? currentSpeed,
+    double? averageSpeed,
   }) {
+    final newTimestamp = DateTime.now().millisecondsSinceEpoch;
+
+    print(
+      '🔍 ETAResult.copyWith: old timestamp=$timestamp, new timestamp=$newTimestamp',
+    );
+
     return ETAResult(
       seconds: seconds ?? this.seconds,
       source: source ?? this.source,
@@ -94,7 +151,14 @@ class ETAResult extends Equatable {
       calculatedAt: calculatedAt ?? this.calculatedAt,
       distanceMeters: distanceMeters ?? this.distanceMeters,
       currentSpeed: currentSpeed ?? this.currentSpeed,
+      averageSpeed: averageSpeed ?? this.averageSpeed,
+      timestamp: newTimestamp,
     );
+  }
+
+  @override
+  String toString() {
+    return 'ETAResult(seconds: $seconds, source: $source, timestamp: $timestamp, confidence: $confidence)';
   }
 }
 

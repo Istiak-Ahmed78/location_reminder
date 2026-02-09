@@ -26,9 +26,7 @@ class MyApp extends StatelessWidget {
       providers: [
         BlocProvider<ReminderBloc>(create: (context) => di.sl<ReminderBloc>()),
         BlocProvider<TrackingBloc>(create: (context) => di.sl<TrackingBloc>()),
-        BlocProvider<ETABloc>(
-          create: (context) => di.sl<ETABloc>(),
-        ), // ← Add this
+        BlocProvider<ETABloc>(create: (context) => di.sl<ETABloc>()),
       ],
       child: MaterialApp(
         title: 'Location Reminder',

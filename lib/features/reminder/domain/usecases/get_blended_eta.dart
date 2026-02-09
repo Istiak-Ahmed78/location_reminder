@@ -1,52 +1,65 @@
 import '../entities/eta_result.dart';
 
-/// Blend local GPS and API ETA for best accuracy
+/// Blend local GPS ETA with API ETA for optimal accuracy
 class GetBlendedETA {
-  static const Duration _apiMaxAge = Duration(minutes: 15);
+  /// Blend two ETA sources intelligently
+  ETAResult call({required ETAResult localETA, required ETAResult apiETA}) {
+    // Weight factors based on confidence and freshness
+    final localWeight = _calculateWeight(localETA);
+    final apiWeight = _calculateWeight(apiETA);
 
-  /// Blend local and API ETA based on freshness and confidence
-  ETAResult call({required ETAResult localETA, ETAResult? apiETA}) {
-    // If no API data, use local
-    if (apiETA == null) {
-      return localETA;
-    }
+    // Normalize weights
+    final totalWeight = localWeight + apiWeight;
+    final normalizedLocalWeight = localWeight / totalWeight;
+    final normalizedApiWeight = apiWeight / totalWeight;
 
-    // If API data is too old, use local
-    final apiAge = DateTime.now().difference(apiETA.calculatedAt);
-    if (apiAge > _apiMaxAge) {
-      return localETA;
-    }
-
-    // Calculate weights based on API freshness
-    final apiWeight = _calculateAPIWeight(apiAge);
-    final localWeight = 1.0 - apiWeight;
-
-    // Blend ETA values
+    // Blend the ETA values
     final blendedSeconds =
-        (apiETA.seconds * apiWeight + localETA.seconds * localWeight).round();
+        ((localETA.seconds * normalizedLocalWeight) +
+                (apiETA.seconds * normalizedApiWeight))
+            .round();
 
-    // Blend confidence
+    // Calculate blended confidence
     final blendedConfidence =
-        (apiETA.confidence * apiWeight + localETA.confidence * localWeight)
-            .clamp(0.0, 1.0);
+        ((localETA.confidence * normalizedLocalWeight) +
+        (apiETA.confidence * normalizedApiWeight));
 
-    return ETAResult(
+    final result = ETAResult(
       seconds: blendedSeconds,
-      source: ETASource.blended,
-      confidence: blendedConfidence,
-      calculatedAt: DateTime.now(),
       distanceMeters: localETA.distanceMeters,
       currentSpeed: localETA.currentSpeed,
+      source: ETASource.blended,
+      calculatedAt: DateTime.now(),
+      confidence: blendedConfidence,
+      timestamp:
+          DateTime.now().millisecondsSinceEpoch, // ← Make sure this is here
     );
+
+    print(
+      '🔍 GetBlendedETA: Created ETAResult - seconds: ${result.seconds}, timestamp: ${result.timestamp}',
+    );
+
+    return result;
   }
 
-  /// Calculate API weight based on age (newer = higher weight)
-  double _calculateAPIWeight(Duration age) {
-    final ageMinutes = age.inMinutes.toDouble();
-    final maxAgeMinutes = _apiMaxAge.inMinutes.toDouble();
+  /// Calculate weight based on confidence and age
+  double _calculateWeight(ETAResult eta) {
+    // Start with confidence as base weight
+    double weight = eta.confidence;
 
-    // Linear decay: 100% at 0 min, 0% at 15 min
-    final weight = 1.0 - (ageMinutes / maxAgeMinutes);
-    return weight.clamp(0.0, 1.0);
+    // Reduce weight for stale data
+    final ageMinutes = DateTime.now().difference(eta.calculatedAt).inMinutes;
+    if (ageMinutes > 5) {
+      weight *= 0.5; // 50% penalty for stale data
+    } else if (ageMinutes > 2) {
+      weight *= 0.8; // 20% penalty for slightly old data
+    }
+
+    // Boost API data slightly (it considers traffic)
+    if (eta.source == ETASource.api) {
+      weight *= 1.1;
+    }
+
+    return weight;
   }
 }

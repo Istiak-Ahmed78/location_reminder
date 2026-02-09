@@ -53,6 +53,7 @@ class FetchAPIETA {
         calculatedAt: DateTime.now(),
         distanceMeters: distance,
         currentSpeed: currentSpeed,
+        averageSpeed: null, // ✅ ADDED - API doesn't provide average speed
       );
     } on RateLimitException {
       return null;
@@ -84,6 +85,7 @@ class FetchAPIETA {
       calculatedAt: DateTime.parse(cached['timestamp'] as String),
       distanceMeters: distance,
       currentSpeed: currentSpeed,
+      averageSpeed: null, // ✅ ALREADY CORRECT
     );
   }
 }
