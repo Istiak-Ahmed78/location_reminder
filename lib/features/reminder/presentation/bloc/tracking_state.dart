@@ -27,6 +27,7 @@ class TrackingState extends Equatable {
   final String? errorMessage;
   final TrackingSettings? trackingSettings;
   final bool isLive;
+  final bool isInBackground;
 
   const TrackingState({
     required this.status,
@@ -38,6 +39,7 @@ class TrackingState extends Equatable {
     this.errorMessage,
     this.trackingSettings,
     this.isLive = false,
+    this.isInBackground = false,
   });
 
   const TrackingState.initial()
@@ -48,6 +50,7 @@ class TrackingState extends Equatable {
       insideRadius = null,
       triggered = false,
       isLive = false,
+      isInBackground = false,
       errorMessage = null,
       trackingSettings = null;
 
@@ -59,6 +62,7 @@ class TrackingState extends Equatable {
     bool? insideRadius,
     bool? triggered,
     bool? isLive,
+    bool? isInBackground,
     String? errorMessage,
     TrackingSettings? trackingSettings,
     bool clearErrorMessage = false,
@@ -71,6 +75,8 @@ class TrackingState extends Equatable {
       insideRadius: insideRadius ?? this.insideRadius,
       triggered: triggered ?? this.triggered,
       isLive: isLive ?? this.isLive,
+      isInBackground:
+          this.isInBackground, // Keep isInBackground value unchanged
       errorMessage: clearErrorMessage
           ? null
           : (errorMessage ?? this.errorMessage),
@@ -87,6 +93,7 @@ class TrackingState extends Equatable {
     insideRadius,
     triggered,
     isLive,
+    isInBackground,
     errorMessage,
     trackingSettings,
   ];

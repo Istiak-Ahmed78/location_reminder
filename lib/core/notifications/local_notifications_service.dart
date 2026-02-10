@@ -21,7 +21,6 @@ class LocalNotificationsService {
       iOS: iosInit,
     );
 
-    // ✅ Your plugin requires `settings:`
     await _plugin.initialize(settings: initSettings);
   }
 

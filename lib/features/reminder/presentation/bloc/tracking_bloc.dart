@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:location_reminder/core/background/background_location_service.dart';
+import 'package:location_reminder/core/background/foreground_location_service.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_event.dart';
 
 import '../../../../core/notifications/local_notifications_service.dart';
@@ -19,6 +23,8 @@ part 'tracking_state.dart';
 
 /// Manages location tracking and destination reminder monitoring
 class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
+  final BackgroundLocationService backgroundService;
+  final ForegroundLocationService foregroundService;
   final WatchPosition watchPosition;
   final GetActiveReminder getActiveReminder;
   final GetLastCachedLocation getLastCachedLocation;
@@ -38,8 +44,14 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     required this.getActiveReminder,
     required this.notifications,
     required this.getLastCachedLocation,
-    required this.etaBloc, // ← NEW: Required parameter
+    required this.etaBloc,
+    required this.backgroundService,
+    required this.foregroundService,
   }) : super(const TrackingState.initial()) {
+    _initializeBackgroundServices();
+
+    // Listen to app lifecycle
+    _setupAppLifecycleListener();
     on<TrackingStarted>(_onStarted);
     on<TrackingStopped>(_onStopped);
     on<TrackingStartedForLocationOnly>(_onStartedForLocationOnly);
@@ -74,7 +86,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         );
         return;
       }
-
+      await backgroundService.saveActiveReminderForBackground(reminder);
       _resetTrackingState();
       await _cancelAllSubscriptions();
 
@@ -87,11 +99,24 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       );
       // ================================================
 
+      // FIXED: Don't pass emit as parameter, use it directly in this method
       await _startTrackingWithSettings(
         distanceFilter: 10,
         accuracy: LocationAccuracy.high,
         reminder: reminder,
-        emit: emit,
+      );
+      emit(
+        state.copyWith(
+          status: TrackingStatus.tracking,
+          activeReminder: reminder,
+          isLive: false,
+          trackingSettings: TrackingSettings(
+            distanceFilter: 10,
+            accuracy: LocationAccuracy.high.toString(),
+            lastUpdated: DateTime.now(),
+          ),
+          clearErrorMessage: true,
+        ),
       );
 
       _setupAdaptiveTimer(reminder, emit);
@@ -103,6 +128,90 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
           errorMessage: e.toString(),
           clearErrorMessage: false,
         ),
+      );
+    }
+  }
+
+  Future<void> _initializeBackgroundServices() async {
+    await backgroundService.initialize();
+  }
+
+  void _setupAppLifecycleListener() {
+    AppLifecycleListener(
+      onStateChange: (state) {
+        print('📱 App lifecycle: $state');
+
+        if (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.inactive) {
+          _onAppToBackground();
+        } else if (state == AppLifecycleState.resumed) {
+          _onAppToForeground();
+        } else if (state == AppLifecycleState.detached) {
+          _onAppClosed();
+        }
+      },
+    );
+  }
+
+  Future<void> _onAppToBackground() async {
+    if (state.activeReminder != null) {
+      print('📱 Switching to background tracking');
+
+      // Stop foreground location stream to save battery
+      await _locationSubscription?.cancel();
+      _locationSubscription = null;
+
+      // Start foreground service (Android) or background task
+      if (Platform.isAndroid) {
+        await foregroundService.startForegroundService(state.activeReminder!);
+      } else if (Platform.isIOS) {
+        await backgroundService.startBackgroundTracking();
+      }
+
+      // Update state to show background mode
+      emit(
+        state.copyWith(
+          isLive: false,
+          isInBackground: true,
+          status: TrackingStatus.tracking,
+        ),
+      );
+    }
+  }
+
+  /// App returned to foreground
+  Future<void> _onAppToForeground() async {
+    if (state.activeReminder != null) {
+      print('📱 Switching to foreground tracking');
+
+      // Stop background services
+      await foregroundService.stopForegroundService();
+      await backgroundService.stopBackgroundTracking();
+
+      // Restart foreground location stream
+      await _startTrackingWithSettings(
+        distanceFilter: 10,
+        accuracy: LocationAccuracy.high,
+        reminder: state.activeReminder!,
+      );
+
+      emit(
+        state.copyWith(
+          isLive: true,
+          isInBackground: false,
+          status: TrackingStatus.tracking,
+        ),
+      );
+    }
+  }
+
+  /// App closed
+  Future<void> _onAppClosed() async {
+    print('📱 App closed, ensuring background tracking continues');
+
+    if (state.activeReminder != null) {
+      await backgroundService.saveActiveReminderForBackground(
+        state.activeReminder,
       );
     }
   }
@@ -162,6 +271,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     TrackingStopped event,
     Emitter<TrackingState> emit,
   ) async {
+    await backgroundService.saveActiveReminderForBackground(null);
+    await foregroundService.stopForegroundService();
     await _cancelAllSubscriptions();
     _resetTrackingState();
     _isLocationOnlyMode = false;
@@ -258,7 +369,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       distanceFilter: event.distanceFilter,
       accuracy: event.accuracy,
       reminder: reminder,
-      emit: emit,
     );
   }
 
@@ -274,7 +384,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
         distanceFilter: 10,
         accuracy: LocationAccuracy.high,
         reminder: state.activeReminder!,
-        emit: emit,
       );
     }
   }
@@ -355,7 +464,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     required double distanceFilter,
     required LocationAccuracy accuracy,
     required DestinationReminder reminder,
-    required Emitter<TrackingState> emit,
   }) async {
     print('🟠 TrackingBloc: _startTrackingWithSettings called');
     print('   distanceFilter: $distanceFilter, accuracy: $accuracy');
@@ -366,18 +474,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
       if (!serviceEnabled) {
         print('⚠️ TrackingBloc: Location service is disabled!');
-        if (!emit.isDone) {
-          emit(
-            state.copyWith(
-              status: TrackingStatus.tracking,
-              activeReminder: reminder,
-              isLive: false,
-              errorMessage:
-                  'Location service is disabled. Turn it on to get live updates.',
-              clearErrorMessage: false,
-            ),
-          );
-        }
+        // Don't emit here - let the caller handle it
         return;
       }
 
@@ -407,38 +504,9 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       );
 
       print('✅ TrackingBloc: Location subscription set up successfully');
-
-      if (!emit.isDone) {
-        emit(
-          state.copyWith(
-            status: TrackingStatus.tracking,
-            activeReminder: reminder,
-            current: null,
-            distanceMeters: null,
-            insideRadius: null,
-            triggered: false,
-            isLive: false,
-            trackingSettings: TrackingSettings(
-              distanceFilter: distanceFilter,
-              accuracy: accuracy.toString(),
-              lastUpdated: DateTime.now(),
-            ),
-            clearErrorMessage: true,
-          ),
-        );
-      }
     } catch (e) {
       print('❌ TrackingBloc: Error in _startTrackingWithSettings: $e');
-      if (!emit.isDone) {
-        emit(
-          state.copyWith(
-            status: TrackingStatus.failure,
-            isLive: false,
-            errorMessage: e.toString(),
-            clearErrorMessage: false,
-          ),
-        );
-      }
+      // Don't emit here - let the caller handle it
     }
   }
 
@@ -587,6 +655,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
   @override
   Future<void> close() async {
+    await foregroundService.stopForegroundService();
+    await backgroundService.stopBackgroundTracking();
     await _cancelAllSubscriptions();
     return super.close();
   }

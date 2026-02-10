@@ -136,7 +136,9 @@ Future<void> initDependencies() async {
       getActiveReminder: sl(),
       notifications: sl(),
       getLastCachedLocation: sl(),
-      etaBloc: sl<ETABloc>(), // ← Now gets the SAME singleton instance
+      etaBloc: sl(),
+      backgroundService: sl(), // Add this
+      foregroundService: sl(),
     ),
   );
 

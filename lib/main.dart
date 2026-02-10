@@ -38,7 +38,6 @@ class MyApp extends StatelessWidget {
             return di.sl<TrackingBloc>();
           },
         ),
-        // REMOVE ETABloc from here - it's a singleton from DI
       ],
       child: MaterialApp(
         title: 'Location Reminder',
