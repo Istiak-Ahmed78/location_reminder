@@ -46,8 +46,9 @@ class NotificationPermissionBloc
 
   NotificationPermissionStatus _map(PermissionStatus s) {
     if (s.isGranted) return NotificationPermissionStatus.granted;
-    if (s.isPermanentlyDenied)
+    if (s.isPermanentlyDenied) {
       return NotificationPermissionStatus.permanentlyDenied;
+    }
     if (s.isDenied) return NotificationPermissionStatus.denied;
     if (s.isRestricted) return NotificationPermissionStatus.denied;
     if (s.isLimited) return NotificationPermissionStatus.denied;

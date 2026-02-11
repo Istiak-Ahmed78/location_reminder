@@ -10,7 +10,6 @@ import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.
 import 'package:location_reminder/features/reminder/presentation/bloc/reminder_bloc.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_bloc.dart';
-import 'package:location_reminder/features/reminder/domain/entities/eta_result.dart';
 import 'package:location_reminder/features/reminder/presentation/widgets/eta_display_card.dart';
 import 'package:location_reminder/features/reminder/presentation/widgets/location_picker_screen.dart';
 

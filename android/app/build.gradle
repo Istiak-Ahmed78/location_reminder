@@ -1,0 +1,76 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+android {
+    namespace "com.example.location_reminder"
+    compileSdkVersion flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    defaultConfig {
+        applicationId "com.example.location_reminder"
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion flutter.targetSdkVersion
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    // ========== UPDATED: Core library desugaring ==========
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'  // Changed from 2.0.4 to 2.1.4
+    
+    // MultiDex support
+    implementation 'androidx.multidex:multidex:2.0.1'
+    
+    // Work Manager dependencies
+    implementation 'androidx.work:work-runtime:2.9.0'
+    implementation 'androidx.work:work-runtime-ktx:2.9.0'
+    
+    // AndroidX core dependencies
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.lifecycle:lifecycle-process:2.8.0'
+    implementation 'androidx.lifecycle:lifecycle-service:2.8.0'
+}

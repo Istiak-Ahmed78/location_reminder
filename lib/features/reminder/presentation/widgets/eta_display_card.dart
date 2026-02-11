@@ -11,13 +11,13 @@ class ETADisplayCard extends StatelessWidget {
   final ETAState etaState; // ← ADD THIS PARAMETER
 
   const ETADisplayCard({
-    Key? key,
+    super.key,
     required this.reminder,
     required this.onTap,
     this.distanceMeters,
     this.isLive = false,
     required this.etaState, // ← ADD THIS
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

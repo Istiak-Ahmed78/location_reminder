@@ -138,7 +138,7 @@ class ForegroundLocationService {
                 'lat': position.latitude,
                 'lon': position.longitude,
                 'speed': position.speed,
-                'timestamp': position.timestamp?.millisecondsSinceEpoch,
+                'timestamp': position.timestamp.millisecondsSinceEpoch,
               };
 
               // Send to main isolate if needed

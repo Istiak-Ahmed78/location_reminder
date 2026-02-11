@@ -5,7 +5,6 @@ import 'package:location_reminder/core/di/injection_container.dart' as di;
 import 'package:location_reminder/features/reminder/presentation/bloc/reminder_bloc.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/tracking_bloc.dart';
 import 'package:location_reminder/features/reminder/presentation/pages/home_page.dart';
-import 'package:location_reminder/features/reminder/presentation/bloc/eta_bloc.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

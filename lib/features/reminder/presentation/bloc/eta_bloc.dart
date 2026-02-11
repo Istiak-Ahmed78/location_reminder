@@ -34,7 +34,7 @@ class ETABloc extends Bloc<ETAEvent, ETAState> {
     required this.getBlendedETA,
     required this.cacheService,
   }) : super(ETAState.initial()) {
-    print('🏗️ ETABloc created: ${hashCode}');
+    print('🏗️ ETABloc created: $hashCode');
 
     // Add stream listener for debugging
     stream.listen((state) {
