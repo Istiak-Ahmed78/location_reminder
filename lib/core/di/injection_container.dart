@@ -2,6 +2,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
+import 'package:location_reminder/core/background/background_location_service.dart';
+import 'package:location_reminder/core/background/foreground_location_service.dart';
 import 'package:location_reminder/core/notifications/local_notifications_service.dart';
 import 'package:location_reminder/core/notifications/notification_permission_bloc.dart';
 import 'package:location_reminder/features/reminder/domain/usecases/get_last_cached_location.dart';
@@ -36,18 +38,33 @@ import '../../features/reminder/domain/usecases/get_blended_eta.dart';
 import '../../features/reminder/presentation/bloc/eta_bloc.dart';
 
 final sl = GetIt.instance;
-
 Future<void> initDependencies() async {
   // ========== Core ==========
   final prefs = await SharedPreferences.getInstance();
   sl.registerLazySingleton<SharedPreferences>(() => prefs);
 
-  // HTTP Client (for API calls)
+  // HTTP Client
   sl.registerLazySingleton(() => http.Client());
 
-  // ========== Location Feature ==========
+  // ========== Notifications (MOVE THIS UP) ==========
+  sl.registerLazySingleton(() => FlutterLocalNotificationsPlugin());
+  sl.registerLazySingleton(() => LocalNotificationsService(sl()));
 
-  // Data sources
+  // Initialize notifications
+  await sl<LocalNotificationsService>().init();
+
+  // ========== Background Services (ADD THIS) ==========
+  sl.registerLazySingleton<BackgroundLocationService>(
+    () => BackgroundLocationService(
+      sl(),
+    ), // Needs FlutterLocalNotificationsPlugin
+  );
+
+  sl.registerLazySingleton<ForegroundLocationService>(
+    () => ForegroundLocationService(),
+  );
+
+  // ========== Location Feature ==========
   sl.registerLazySingleton<LocationDataSource>(
     () => GeolocatorLocationDataSource(),
   );
@@ -56,12 +73,8 @@ Future<void> initDependencies() async {
     () => SharedPreferencesLocationDataSource(sl()),
   );
 
-  // Repository
   sl.registerLazySingleton<LocationRepository>(
-    () => LocationRepositoryImpl(
-      sl(), // LocationDataSource
-      sl(), // LocationLocalDataSource
-    ),
+    () => LocationRepositoryImpl(sl(), sl()),
   );
 
   // Use cases
@@ -76,13 +89,10 @@ Future<void> initDependencies() async {
   );
 
   // ========== Reminder Feature ==========
-
-  // Data source
   sl.registerLazySingleton<ReminderLocalDataSource>(
     () => ReminderLocalDataSourceImpl(sl()),
   );
 
-  // Repository
   sl.registerLazySingleton<ReminderRepository>(
     () => ReminderRepositoryImpl(localDataSource: sl()),
   );
@@ -101,12 +111,10 @@ Future<void> initDependencies() async {
     ),
   );
 
-  // ========== ETA FEATURE (NEW) ==========
-
-  // Services
+  // ========== ETA FEATURE ==========
   sl.registerLazySingleton(
     () => OpenRouteServiceClient(
-      apiKey: dotenv.env['OPENROUTE_API_KEY'] ?? '', // ← Use dotenv here
+      apiKey: dotenv.env['OPENROUTE_API_KEY'] ?? '',
       httpClient: sl(),
     ),
   );
@@ -120,7 +128,7 @@ Future<void> initDependencies() async {
   );
   sl.registerLazySingleton(() => GetBlendedETA());
 
-  // Make sure ETABloc is registered as Factory (not Singleton)
+  // ETABloc
   sl.registerLazySingleton<ETABloc>(
     () => ETABloc(
       calculateLocalETA: sl(),
@@ -130,6 +138,7 @@ Future<void> initDependencies() async {
     ),
   );
 
+  // ========== TrackingBloc (NOW ALL DEPENDENCIES ARE REGISTERED) ==========
   sl.registerFactory(
     () => TrackingBloc(
       watchPosition: sl(),
@@ -137,17 +146,10 @@ Future<void> initDependencies() async {
       notifications: sl(),
       getLastCachedLocation: sl(),
       etaBloc: sl(),
-      backgroundService: sl(), // Add this
-      foregroundService: sl(),
+      backgroundService: sl(), // ✅ Now registered
+      foregroundService: sl(), // ✅ Now registered
     ),
   );
-
-  // ========== Notifications ==========
-  sl.registerLazySingleton(() => FlutterLocalNotificationsPlugin());
-  sl.registerLazySingleton(() => LocalNotificationsService(sl()));
-
-  // Initialize notifications (must be awaited)
-  await sl<LocalNotificationsService>().init();
 
   // Notification permission bloc
   sl.registerFactory(() => NotificationPermissionBloc());
