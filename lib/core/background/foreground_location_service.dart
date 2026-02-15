@@ -38,7 +38,7 @@ class ForegroundLocationService {
       ),
       iosNotificationOptions: const IOSNotificationOptions(
         showNotification: true,
-        playSound: false,
+        playSound: true,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
         eventAction: ForegroundTaskEventAction.repeat(

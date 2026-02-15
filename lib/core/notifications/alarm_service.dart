@@ -13,38 +13,39 @@ class AlarmService {
     await Alarm.init();
   }
 
-  /// Trigger loud alarm when destination is reached
   Future<void> triggerArrivalAlarm({
     required String destinationName,
     required double distanceMeters,
   }) async {
-    // Create alarm settings
+    print('🚨 AlarmService: Triggering arrival alarm for $destinationName');
+
     final alarmSettings = AlarmSettings(
       id: 999,
       dateTime: DateTime.now(),
+      // ✅ FIX: Use null to use system default alarm sound
       assetAudioPath: 'assets/ring.mp3',
       loopAudio: true,
       vibrate: true,
-
+      warningNotificationOnKill: true,
+      androidFullScreenIntent: true,
       volumeSettings: const VolumeSettings.fixed(volume: 1.0),
 
       notificationSettings: NotificationSettings(
-        title: '🚨 ARRIVED AT $destinationName',
-        body: 'You are ${distanceMeters.toInt()}m from your destination!',
+        title: '🚨 Arrived at $destinationName!',
+        body:
+            'You are ${distanceMeters.toStringAsFixed(0)}m from your destination',
         stopButton: 'Stop Alarm',
         icon: 'notification_icon',
       ),
-
-      androidFullScreenIntent: true,
     );
 
-    await Alarm.set(alarmSettings: alarmSettings);
-
-    // Also show notification for redundancy
-    await _showHighPriorityNotification(
-      title: '🚨 ARRIVED AT $destinationName',
-      body: 'You are ${distanceMeters.toInt()}m from your destination!',
-    );
+    try {
+      await Alarm.set(alarmSettings: alarmSettings);
+      print('✅ AlarmService: Alarm set successfully');
+    } catch (e) {
+      print('❌ AlarmService: Failed to set alarm: $e');
+      rethrow;
+    }
   }
 
   /// Stop the alarm

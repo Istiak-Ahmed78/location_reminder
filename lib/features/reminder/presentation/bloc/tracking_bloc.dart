@@ -40,7 +40,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   DateTime? _lastLocationTime;
   bool _isLocationOnlyMode = false;
   bool _wasInsideRadius = false;
-  bool _alarmTriggered = false; // ← NEW: Prevent multiple alarm triggers
+  bool _alarmTriggered = false; // Prevent multiple alarm triggers
 
   TrackingBloc({
     required this.watchPosition,
@@ -71,7 +71,10 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       await backgroundService.initialize();
       print('✅ TrackingBloc: Background services initialized');
     } catch (e) {
-      print('❌ TrackingBloc: Failed to initialize background services: $e');
+      print(
+        '⚠️ TrackingBloc: Background services initialization failed (non-critical): $e',
+      );
+      // Don't block app startup - background tracking is optional
     }
   }
 
@@ -94,7 +97,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
   // ==================== EVENT HANDLERS ====================
 
-  /// Starts tracking with an active reminder
   Future<void> _onStarted(
     TrackingStarted event,
     Emitter<TrackingState> emit,
@@ -123,8 +125,16 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
 
       print('✅ TrackingBloc: Active reminder found: ${reminder.label}');
 
-      // Save reminder for background service
-      await backgroundService.saveActiveReminderForBackground(reminder);
+      // ✅ FIX: Try to save for background, but don't fail if it errors
+      try {
+        await backgroundService.saveActiveReminderForBackground(reminder);
+        print('✅ TrackingBloc: Background service configured');
+      } catch (e) {
+        print(
+          '⚠️ TrackingBloc: Background service setup failed (non-critical): $e',
+        );
+        // Continue anyway - foreground tracking will still work
+      }
 
       // Reset tracking state
       _resetTrackingState();
@@ -166,12 +176,40 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       _startServiceStatusListener();
 
       print('✅ TrackingBloc: Tracking started successfully');
+
+      // ✅ FIX: Force immediate location update
+      Future.delayed(const Duration(milliseconds: 500), () async {
+        try {
+          final currentPosition = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+            timeLimit: const Duration(seconds: 10),
+          );
+
+          final userLocation = UserLocation(
+            latitude: currentPosition.latitude,
+            longitude: currentPosition.longitude,
+            accuracy: currentPosition.accuracy,
+            timestamp: currentPosition.timestamp ?? DateTime.now(),
+            speed: currentPosition.speed,
+          );
+
+          print(
+            '📍 TrackingBloc: Forced immediate location: ${userLocation.latitude}, ${userLocation.longitude}',
+          );
+
+          if (!isClosed) {
+            add(_TrackingLocationUpdated(userLocation));
+          }
+        } catch (e) {
+          print('❌ TrackingBloc: Failed to get immediate location: $e');
+        }
+      });
     } catch (e) {
       print('❌ TrackingBloc: Error starting tracking: $e');
       emit(
         state.copyWith(
           status: TrackingStatus.failure,
-          errorMessage: e.toString(),
+          errorMessage: 'Failed to start tracking: ${e.toString()}',
           clearErrorMessage: false,
         ),
       );
@@ -243,30 +281,46 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   ) async {
     print('🛑 TrackingBloc: Stopping tracking...');
 
-    // Stop background services
-    await backgroundService.saveActiveReminderForBackground(null);
-    await foregroundService.stopForegroundService();
+    try {
+      // ✅ FIX: Stop background services with error handling
+      try {
+        await backgroundService.saveActiveReminderForBackground(null);
+      } catch (e) {
+        print('⚠️ TrackingBloc: Background service stop failed (ignored): $e');
+      }
 
-    // Cancel subscriptions
-    await _cancelAllSubscriptions();
+      await foregroundService.stopForegroundService();
 
-    // Reset state
-    _resetTrackingState();
-    _isLocationOnlyMode = false;
+      // Cancel subscriptions
+      await _cancelAllSubscriptions();
 
-    // Stop ETA calculation
-    etaBloc.add(const ETACalculationStopped());
+      // Reset state
+      _resetTrackingState();
+      _isLocationOnlyMode = false;
 
-    emit(
-      state.copyWith(
-        status: TrackingStatus.idle,
-        isLive: false,
-        errorMessage: event.error,
-        clearErrorMessage: event.error == null,
-      ),
-    );
+      // Stop ETA calculation
+      etaBloc.add(const ETACalculationStopped());
 
-    print('✅ TrackingBloc: Tracking stopped');
+      emit(
+        state.copyWith(
+          status: TrackingStatus.idle,
+          isLive: false,
+          errorMessage: event.error,
+          clearErrorMessage: event.error == null,
+        ),
+      );
+
+      print('✅ TrackingBloc: Tracking stopped');
+    } catch (e) {
+      print('❌ TrackingBloc: Error stopping tracking: $e');
+      emit(
+        state.copyWith(
+          status: TrackingStatus.failure,
+          errorMessage: 'Failed to stop tracking: ${e.toString()}',
+          clearErrorMessage: false,
+        ),
+      );
+    }
   }
 
   /// Handles location updates
@@ -413,11 +467,15 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       await _locationSubscription?.cancel();
       _locationSubscription = null;
 
-      // Start foreground service (Android) or background task
-      if (Platform.isAndroid) {
-        await foregroundService.startForegroundService(state.activeReminder!);
-      } else if (Platform.isIOS) {
-        await backgroundService.startBackgroundTracking();
+      // ✅ FIX: Start foreground service with error handling
+      try {
+        if (Platform.isAndroid) {
+          await foregroundService.startForegroundService(state.activeReminder!);
+        } else if (Platform.isIOS) {
+          await backgroundService.startBackgroundTracking();
+        }
+      } catch (e) {
+        print('⚠️ TrackingBloc: Background service start failed (ignored): $e');
       }
 
       // Update state to show background mode
@@ -437,9 +495,14 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     if (state.activeReminder != null) {
       print('📱 TrackingBloc: Switching to foreground tracking');
 
-      // Stop background services
+      // ✅ FIX: Stop background services with error handling
+      try {
+        await backgroundService.stopBackgroundTracking();
+      } catch (e) {
+        print('⚠️ TrackingBloc: Background service stop failed (ignored): $e');
+      }
+
       await foregroundService.stopForegroundService();
-      await backgroundService.stopBackgroundTracking();
 
       // Restart foreground location stream
       await _startTrackingWithSettings(
@@ -466,9 +529,13 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     );
 
     if (state.activeReminder != null) {
-      await backgroundService.saveActiveReminderForBackground(
-        state.activeReminder,
-      );
+      try {
+        await backgroundService.saveActiveReminderForBackground(
+          state.activeReminder,
+        );
+      } catch (e) {
+        print('⚠️ TrackingBloc: Failed to save reminder for background: $e');
+      }
     }
   }
 
@@ -744,14 +811,21 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     _lastDistance = double.infinity;
     _lastLocationTime = null;
     _wasInsideRadius = false;
-    _alarmTriggered = false; // ← Reset alarm flag
+    _alarmTriggered = false; // Reset alarm flag
   }
 
   @override
   Future<void> close() async {
     print('🛑 TrackingBloc: Closing...');
     await foregroundService.stopForegroundService();
-    await backgroundService.stopBackgroundTracking();
+
+    // ✅ FIX: Stop background tracking with error handling
+    try {
+      await backgroundService.stopBackgroundTracking();
+    } catch (e) {
+      print('⚠️ TrackingBloc: Background cleanup failed (ignored): $e');
+    }
+
     await _cancelAllSubscriptions();
     return super.close();
   }

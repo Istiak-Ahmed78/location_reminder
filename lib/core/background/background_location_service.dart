@@ -16,24 +16,35 @@ class BackgroundLocationService {
 
   /// Initialize background tracking
   Future<void> initialize() async {
-    await Workmanager().initialize(
-      callbackDispatcher,
-      isInDebugMode: true, // Set to false in production
-    );
+    try {
+      print('$_tag: Initializing WorkManager...');
 
-    // Configure notification channel for Android
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'background_location_channel',
-      'Background Location Updates',
-      description: 'Location updates when app is in background',
-      importance: Importance.low,
-    );
+      await Workmanager().initialize(
+        callbackDispatcher,
+        isInDebugMode: true, // Set to false in production
+      );
 
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(channel);
+      print('$_tag: ✅ WorkManager initialized successfully');
+
+      // Configure notification channel for Android
+      const AndroidNotificationChannel channel = AndroidNotificationChannel(
+        'background_location_channel',
+        'Background Location Updates',
+        description: 'Location updates when app is in background',
+        importance: Importance.low,
+      );
+
+      await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(channel);
+
+      print('$_tag: ✅ Notification channel created');
+    } catch (e) {
+      print('$_tag: ❌ Initialization error: $e');
+      // Don't rethrow - allow app to continue without background tracking
+    }
   }
 
   /// Start background tracking
@@ -65,7 +76,6 @@ class BackgroundLocationService {
         requiresDeviceIdle: false,
         requiresStorageNotLow: false,
       ),
-      // FIX: Changed to ExistingPeriodicWorkPolicy
       existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
     );
 
@@ -74,23 +84,43 @@ class BackgroundLocationService {
 
   /// Stop background tracking
   Future<void> stopBackgroundTracking() async {
-    print('$_tag: Stopping background tracking');
-    await Workmanager().cancelByTag(_workManagerTask);
+    try {
+      print('$_tag: Stopping background tracking');
+      await Workmanager().cancelByTag(_workManagerTask);
+      print('$_tag: ✅ Background tracking stopped');
+    } catch (e) {
+      // ✅ FIX: Silently ignore WorkManager errors
+      print('$_tag: ⚠️ Could not stop background tracking (non-critical): $e');
+      // Don't rethrow - this is non-critical
+    }
   }
 
   /// Save active reminder for background tracking
   Future<void> saveActiveReminderForBackground(
     DestinationReminder? reminder,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-    if (reminder == null) {
-      await prefs.remove(_activeReminderKey);
+      // Stop any existing background tracking first
       await stopBackgroundTracking();
-    } else {
+
+      if (reminder == null) {
+        await prefs.remove(_activeReminderKey);
+        print('$_tag: Active reminder cleared');
+        return;
+      }
+
+      // Save reminder
       final model = DestinationReminderModel.fromEntity(reminder);
       await prefs.setString(_activeReminderKey, model.toJsonString());
+      print('$_tag: Active reminder saved: ${reminder.label}');
+
+      // Start background tracking
       await startBackgroundTracking();
+    } catch (e) {
+      print('$_tag: ❌ Error saving reminder: $e');
+      // Don't rethrow - foreground tracking will still work
     }
   }
 

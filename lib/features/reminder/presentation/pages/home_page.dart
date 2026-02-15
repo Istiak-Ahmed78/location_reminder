@@ -539,7 +539,23 @@ class _HomeViewState extends State<HomeView> {
         child: Stack(
           children: [
             // ==================== MAP ====================
+            // ==================== MAP ====================
             BlocBuilder<TrackingBloc, TrackingState>(
+              buildWhen: (previous, current) {
+                // ✅ FIX: Rebuild when location or isLive changes
+                final shouldRebuild =
+                    previous.current != current.current ||
+                    previous.isLive != current.isLive ||
+                    previous.activeReminder != current.activeReminder;
+
+                if (shouldRebuild) {
+                  print(
+                    '🗺️ Map rebuilding - location: ${current.current?.latitude}, isLive: ${current.isLive}',
+                  );
+                }
+
+                return shouldRebuild;
+              },
               builder: (context, trackingState) {
                 if (trackingState.current != null) {
                   _currentLocation = LatLng(
@@ -553,6 +569,9 @@ class _HomeViewState extends State<HomeView> {
                     final reminder = reminderState.active;
 
                     return FlutterMap(
+                      key: ValueKey(
+                        'map_${trackingState.current?.timestamp.millisecondsSinceEpoch}_${trackingState.isLive}',
+                      ), // ← Add key
                       mapController: _mapController,
                       options: MapOptions(
                         initialCenter:
@@ -588,7 +607,7 @@ class _HomeViewState extends State<HomeView> {
                             ],
                           ),
 
-                        // Current location marker
+                        // ✅ FIX: Current location marker - ALWAYS show
                         if (_currentLocation != null)
                           MarkerLayer(
                             markers: [
@@ -596,8 +615,32 @@ class _HomeViewState extends State<HomeView> {
                                 point: _currentLocation!,
                                 width: 40,
                                 height: 40,
-                                child: _buildLocationMarker(
-                                  trackingState.isLive,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color:
+                                        (trackingState.isLive
+                                                ? Colors.blue
+                                                : Colors.grey)
+                                            .withOpacity(0.3),
+                                    border: Border.all(
+                                      color: trackingState.isLive
+                                          ? Colors.blue
+                                          : Colors.grey,
+                                      width: 3,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Icon(
+                                      trackingState.isLive
+                                          ? Icons.my_location
+                                          : Icons.location_searching,
+                                      color: trackingState.isLive
+                                          ? Colors.blue
+                                          : Colors.grey,
+                                      size: 20,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -642,33 +685,39 @@ class _HomeViewState extends State<HomeView> {
               top: 16,
               left: 16,
               right: 16,
-              child: StreamBuilder<ETAState>(
-                stream: etaBloc.stream,
-                initialData: etaBloc.state,
-                builder: (context, snapshot) {
-                  final reminderState = context.watch<ReminderBloc>().state;
-                  final trackingState = context.watch<TrackingBloc>().state;
-                  final etaState = snapshot.data ?? ETAState.initial();
-
+              child: BlocBuilder<ReminderBloc, ReminderState>(
+                builder: (context, reminderState) {
                   final reminder = reminderState.active;
-
-                  print(
-                    '🎯 StreamBuilder: reminder=${reminder?.label}, etaState.isActive=${etaState.isActive}, eta=${etaState.eta?.seconds}',
-                  );
 
                   if (reminder == null) {
                     return const SizedBox.shrink();
                   }
 
-                  return ETADisplayCard(
-                    key: ValueKey(
-                      'eta_card_${etaState.eta?.seconds}_${etaState.isActive}_${DateTime.now().millisecondsSinceEpoch}',
-                    ),
-                    reminder: reminder,
-                    onTap: () => _showReminderDetails(reminder),
-                    distanceMeters: trackingState.distanceMeters,
-                    isLive: trackingState.isLive,
-                    etaState: etaState,
+                  return BlocBuilder<TrackingBloc, TrackingState>(
+                    builder: (context, trackingState) {
+                      return StreamBuilder<ETAState>(
+                        stream: etaBloc.stream,
+                        initialData: etaBloc.state,
+                        builder: (context, snapshot) {
+                          final etaState = snapshot.data ?? ETAState.initial();
+
+                          print(
+                            '🎯 ETACard rebuild - isActive: ${etaState.isActive}, eta: ${etaState.eta?.seconds}',
+                          );
+
+                          return ETADisplayCard(
+                            key: ValueKey(
+                              'eta_${etaState.timestamp.millisecondsSinceEpoch}',
+                            ), // ← Better key
+                            reminder: reminder,
+                            onTap: () => _showReminderDetails(reminder),
+                            distanceMeters: trackingState.distanceMeters,
+                            isLive: trackingState.isLive,
+                            etaState: etaState,
+                          );
+                        },
+                      );
+                    },
                   );
                 },
               ),
