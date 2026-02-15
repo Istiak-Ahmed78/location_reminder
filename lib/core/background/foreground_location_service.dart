@@ -14,7 +14,6 @@ class ForegroundLocationService {
   StreamSubscription<Position>? _positionSubscription;
   DestinationReminder? _activeReminder;
 
-  /// Start foreground service with continuous tracking
   Future<void> startForegroundService(DestinationReminder reminder) async {
     if (_isRunning) {
       await stopForegroundService();
@@ -22,21 +21,52 @@ class ForegroundLocationService {
 
     _activeReminder = reminder;
 
-    // Request permissions for foreground service
+    // Request permissions
     await _requestPermissions();
 
-    // Initialize the service
-    await _initService();
+    // Initialize with HIGHER priority
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'foreground_location_channel',
+        channelName: 'Location Tracking',
+        channelDescription: 'Tracks your location in the background',
+        channelImportance:
+            NotificationChannelImportance.HIGH, // ← Changed from LOW
+        priority: NotificationPriority.HIGH, // ← Changed from LOW
+        onlyAlertOnce: true,
+        showWhen: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(
+          10000,
+        ), // ← Changed to 10 seconds
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
 
-    // Start the service
-    await _startService(reminder);
+    // Start service
+    await FlutterForegroundTask.startService(
+      serviceId: 1001,
+      notificationTitle: '📍 Tracking to ${reminder.label}',
+      notificationText: 'Monitoring your location...',
+      notificationIcon: null,
+      notificationButtons: [
+        const NotificationButton(id: 'stop_button', text: 'Stop'),
+      ],
+      callback: _startCallback,
+    );
 
     _isRunning = true;
-
-    // Start location updates
     _startLocationUpdates();
 
-    print('$_tag: Foreground service started');
+    print('$_tag: Foreground service started with HIGH priority');
   }
 
   /// Stop foreground service

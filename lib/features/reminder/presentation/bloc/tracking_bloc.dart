@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:location_reminder/core/background/background_location_service.dart';
 import 'package:location_reminder/core/background/foreground_location_service.dart';
+import 'package:location_reminder/core/notifications/alarm_service.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_event.dart';
 
 import '../../../../core/notifications/local_notifications_service.dart';
@@ -16,7 +17,7 @@ import '../../domain/usecases/get_active_reminder.dart';
 import '../../domain/usecases/get_last_cached_location.dart';
 import '../../domain/usecases/watch_position.dart';
 import '../../domain/usecases/watch_position_params.dart';
-import 'eta_bloc.dart'; // ← NEW IMPORT
+import 'eta_bloc.dart';
 
 part 'tracking_event.dart';
 part 'tracking_state.dart';
@@ -29,7 +30,8 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   final GetActiveReminder getActiveReminder;
   final GetLastCachedLocation getLastCachedLocation;
   final LocalNotificationsService notifications;
-  final ETABloc etaBloc; // ← NEW: ETABloc dependency
+  final ETABloc etaBloc;
+  final AlarmService alarmService;
 
   StreamSubscription<UserLocation>? _locationSubscription;
   StreamSubscription<ServiceStatus>? _serviceStatusSubscription;
@@ -38,6 +40,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
   DateTime? _lastLocationTime;
   bool _isLocationOnlyMode = false;
   bool _wasInsideRadius = false;
+  bool _alarmTriggered = false; // ← NEW: Prevent multiple alarm triggers
 
   TrackingBloc({
     required this.watchPosition,
@@ -47,11 +50,11 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     required this.etaBloc,
     required this.backgroundService,
     required this.foregroundService,
+    required this.alarmService,
   }) : super(const TrackingState.initial()) {
     _initializeBackgroundServices();
-
-    // Listen to app lifecycle
     _setupAppLifecycleListener();
+
     on<TrackingStarted>(_onStarted);
     on<TrackingStopped>(_onStopped);
     on<TrackingStartedForLocationOnly>(_onStartedForLocationOnly);
@@ -61,79 +64,15 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     on<_TrackingServiceDisabled>(_onServiceDisabled);
   }
 
-  // ==================== EVENT HANDLERS ====================
-
-  /// Starts tracking with an active reminder
-  Future<void> _onStarted(
-    TrackingStarted event,
-    Emitter<TrackingState> emit,
-  ) async {
-    _isLocationOnlyMode = false;
-    emit(
-      state.copyWith(status: TrackingStatus.loading, clearErrorMessage: true),
-    );
-
-    try {
-      final reminder = await getActiveReminder(const NoParams());
-
-      if (reminder == null) {
-        emit(
-          state.copyWith(
-            status: TrackingStatus.failure,
-            errorMessage: 'No active reminder. Save a destination first.',
-            clearErrorMessage: false,
-          ),
-        );
-        return;
-      }
-      await backgroundService.saveActiveReminderForBackground(reminder);
-      _resetTrackingState();
-      await _cancelAllSubscriptions();
-
-      // ========== NEW: Start ETA calculation ==========
-      etaBloc.add(
-        ETACalculationStarted(
-          destinationLat: reminder.latitude,
-          destinationLon: reminder.longitude,
-        ),
-      );
-      // ================================================
-
-      // FIXED: Don't pass emit as parameter, use it directly in this method
-      await _startTrackingWithSettings(
-        distanceFilter: 10,
-        accuracy: LocationAccuracy.high,
-        reminder: reminder,
-      );
-      emit(
-        state.copyWith(
-          status: TrackingStatus.tracking,
-          activeReminder: reminder,
-          isLive: false,
-          trackingSettings: TrackingSettings(
-            distanceFilter: 10,
-            accuracy: LocationAccuracy.high.toString(),
-            lastUpdated: DateTime.now(),
-          ),
-          clearErrorMessage: true,
-        ),
-      );
-
-      _setupAdaptiveTimer(reminder, emit);
-      _startServiceStatusListener();
-    } catch (e) {
-      emit(
-        state.copyWith(
-          status: TrackingStatus.failure,
-          errorMessage: e.toString(),
-          clearErrorMessage: false,
-        ),
-      );
-    }
-  }
+  // ==================== INITIALIZATION ====================
 
   Future<void> _initializeBackgroundServices() async {
-    await backgroundService.initialize();
+    try {
+      await backgroundService.initialize();
+      print('✅ TrackingBloc: Background services initialized');
+    } catch (e) {
+      print('❌ TrackingBloc: Failed to initialize background services: $e');
+    }
   }
 
   void _setupAppLifecycleListener() {
@@ -153,9 +92,322 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     );
   }
 
+  // ==================== EVENT HANDLERS ====================
+
+  /// Starts tracking with an active reminder
+  Future<void> _onStarted(
+    TrackingStarted event,
+    Emitter<TrackingState> emit,
+  ) async {
+    print('🚀 TrackingBloc: Starting tracking with reminder...');
+
+    _isLocationOnlyMode = false;
+    emit(
+      state.copyWith(status: TrackingStatus.loading, clearErrorMessage: true),
+    );
+
+    try {
+      final reminder = await getActiveReminder(const NoParams());
+
+      if (reminder == null) {
+        print('⚠️ TrackingBloc: No active reminder found');
+        emit(
+          state.copyWith(
+            status: TrackingStatus.failure,
+            errorMessage: 'No active reminder. Save a destination first.',
+            clearErrorMessage: false,
+          ),
+        );
+        return;
+      }
+
+      print('✅ TrackingBloc: Active reminder found: ${reminder.label}');
+
+      // Save reminder for background service
+      await backgroundService.saveActiveReminderForBackground(reminder);
+
+      // Reset tracking state
+      _resetTrackingState();
+      await _cancelAllSubscriptions();
+
+      // Start ETA calculation
+      print('🎯 TrackingBloc: Starting ETA calculation...');
+      etaBloc.add(
+        ETACalculationStarted(
+          destinationLat: reminder.latitude,
+          destinationLon: reminder.longitude,
+        ),
+      );
+
+      // Start location tracking
+      print('📍 TrackingBloc: Starting location tracking...');
+      await _startTrackingWithSettings(
+        distanceFilter: 10,
+        accuracy: LocationAccuracy.high,
+        reminder: reminder,
+      );
+
+      emit(
+        state.copyWith(
+          status: TrackingStatus.tracking,
+          activeReminder: reminder,
+          isLive: false,
+          trackingSettings: TrackingSettings(
+            distanceFilter: 10,
+            accuracy: LocationAccuracy.high.toString(),
+            lastUpdated: DateTime.now(),
+          ),
+          clearErrorMessage: true,
+        ),
+      );
+
+      // Setup adaptive tracking and service monitoring
+      _setupAdaptiveTimer(reminder, emit);
+      _startServiceStatusListener();
+
+      print('✅ TrackingBloc: Tracking started successfully');
+    } catch (e) {
+      print('❌ TrackingBloc: Error starting tracking: $e');
+      emit(
+        state.copyWith(
+          status: TrackingStatus.failure,
+          errorMessage: e.toString(),
+          clearErrorMessage: false,
+        ),
+      );
+    }
+  }
+
+  /// Starts location-only mode (no reminder tracking)
+  Future<void> _onStartedForLocationOnly(
+    TrackingStartedForLocationOnly event,
+    Emitter<TrackingState> emit,
+  ) async {
+    print('🚀 TrackingBloc: Starting location-only mode...');
+
+    _isLocationOnlyMode = true;
+    emit(
+      state.copyWith(status: TrackingStatus.loading, clearErrorMessage: true),
+    );
+
+    try {
+      // Try to get cached location first
+      final result = await getLastCachedLocation(const NoParams());
+
+      await result.fold(
+        (failure) async {
+          print('⚠️ TrackingBloc: No cached location, starting live stream');
+          await _startLiveLocationStream(emit);
+          _startServiceStatusListener();
+        },
+        (cachedLocation) async {
+          if (cachedLocation != null) {
+            print('✅ TrackingBloc: Using cached location');
+            emit(
+              state.copyWith(
+                status: TrackingStatus.tracking,
+                current: cachedLocation,
+                isLive: false,
+                activeReminder: null,
+                distanceMeters: null,
+                insideRadius: null,
+                triggered: false,
+                trackingSettings: null,
+                clearErrorMessage: true,
+              ),
+            );
+          }
+
+          await _startLiveLocationStream(emit);
+          _startServiceStatusListener();
+        },
+      );
+
+      print('✅ TrackingBloc: Location-only mode started');
+    } catch (e) {
+      print('❌ TrackingBloc: Error starting location-only mode: $e');
+      emit(
+        state.copyWith(
+          status: TrackingStatus.failure,
+          errorMessage: e.toString(),
+          clearErrorMessage: false,
+        ),
+      );
+    }
+  }
+
+  /// Stops all tracking and cleans up resources
+  Future<void> _onStopped(
+    TrackingStopped event,
+    Emitter<TrackingState> emit,
+  ) async {
+    print('🛑 TrackingBloc: Stopping tracking...');
+
+    // Stop background services
+    await backgroundService.saveActiveReminderForBackground(null);
+    await foregroundService.stopForegroundService();
+
+    // Cancel subscriptions
+    await _cancelAllSubscriptions();
+
+    // Reset state
+    _resetTrackingState();
+    _isLocationOnlyMode = false;
+
+    // Stop ETA calculation
+    etaBloc.add(const ETACalculationStopped());
+
+    emit(
+      state.copyWith(
+        status: TrackingStatus.idle,
+        isLive: false,
+        errorMessage: event.error,
+        clearErrorMessage: event.error == null,
+      ),
+    );
+
+    print('✅ TrackingBloc: Tracking stopped');
+  }
+
+  /// Handles location updates
+  Future<void> _onLocationUpdated(
+    _TrackingLocationUpdated event,
+    Emitter<TrackingState> emit,
+  ) async {
+    final location = event.location;
+    _lastLocationTime = DateTime.now();
+
+    print(
+      '📍 TrackingBloc: Location updated - Lat: ${location.latitude}, Lon: ${location.longitude}',
+    );
+
+    if (state.activeReminder != null) {
+      final reminder = state.activeReminder!;
+
+      // Calculate distance to destination
+      final distance = _calculateDistance(
+        location.latitude,
+        location.longitude,
+        reminder.latitude,
+        reminder.longitude,
+      );
+
+      print(
+        '📏 TrackingBloc: Distance to destination: ${distance.toStringAsFixed(2)}m',
+      );
+
+      // Check if inside trigger radius
+      final isInsideRadius = distance <= reminder.triggerDistanceMeters;
+      final justEntered =
+          isInsideRadius && !_wasInsideRadius && !_alarmTriggered;
+
+      if (justEntered) {
+        print(
+          '🚨 TrackingBloc: Just entered trigger radius! Triggering alarm...',
+        );
+        await _triggerArrivalAlarm(reminder, distance);
+      }
+
+      _wasInsideRadius = isInsideRadius;
+      _lastDistance = distance;
+
+      // Send location update to ETABloc
+      etaBloc.add(
+        ETALocationUpdated(
+          currentLat: location.latitude,
+          currentLon: location.longitude,
+          speed: location.speed ?? 0.0,
+          distance: distance,
+        ),
+      );
+
+      emit(
+        state.copyWith(
+          current: location,
+          distanceMeters: distance,
+          insideRadius: isInsideRadius,
+          status: TrackingStatus.tracking,
+          isLive: true,
+        ),
+      );
+    } else {
+      print('⚠️ TrackingBloc: No active reminder, location-only mode');
+
+      emit(
+        state.copyWith(
+          current: location,
+          status: TrackingStatus.tracking,
+          isLive: true,
+        ),
+      );
+    }
+  }
+
+  /// Adjusts tracking settings based on distance and movement
+  Future<void> _onSettingsAdjusted(
+    TrackingSettingsAdjusted event,
+    Emitter<TrackingState> emit,
+  ) async {
+    final reminder = state.activeReminder;
+    if (reminder == null) return;
+
+    print(
+      '⚙️ TrackingBloc: Adjusting settings - distanceFilter: ${event.distanceFilter}, accuracy: ${event.accuracy}',
+    );
+
+    await _locationSubscription?.cancel();
+
+    await _startTrackingWithSettings(
+      distanceFilter: event.distanceFilter,
+      accuracy: event.accuracy,
+      reminder: reminder,
+    );
+  }
+
+  /// Handles location service being enabled
+  Future<void> _onServiceEnabled(
+    _TrackingServiceEnabled event,
+    Emitter<TrackingState> emit,
+  ) async {
+    print('✅ TrackingBloc: Location service enabled');
+
+    if (_isLocationOnlyMode) {
+      await _startLiveLocationStream(emit);
+    } else if (state.activeReminder != null) {
+      await _startTrackingWithSettings(
+        distanceFilter: 10,
+        accuracy: LocationAccuracy.high,
+        reminder: state.activeReminder!,
+      );
+    }
+  }
+
+  /// Handles location service being disabled
+  Future<void> _onServiceDisabled(
+    _TrackingServiceDisabled event,
+    Emitter<TrackingState> emit,
+  ) async {
+    print('⚠️ TrackingBloc: Location service disabled');
+
+    await _locationSubscription?.cancel();
+    _locationSubscription = null;
+
+    emit(
+      state.copyWith(
+        isLive: false,
+        status: TrackingStatus.tracking,
+        errorMessage:
+            'Location service is disabled. Turn it on to get live updates.',
+        clearErrorMessage: false,
+      ),
+    );
+  }
+
+  // ==================== APP LIFECYCLE HANDLERS ====================
+
   Future<void> _onAppToBackground() async {
     if (state.activeReminder != null) {
-      print('📱 Switching to background tracking');
+      print('📱 TrackingBloc: Switching to background tracking');
 
       // Stop foreground location stream to save battery
       await _locationSubscription?.cancel();
@@ -176,13 +428,14 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
           status: TrackingStatus.tracking,
         ),
       );
+
+      print('✅ TrackingBloc: Background tracking started');
     }
   }
 
-  /// App returned to foreground
   Future<void> _onAppToForeground() async {
     if (state.activeReminder != null) {
-      print('📱 Switching to foreground tracking');
+      print('📱 TrackingBloc: Switching to foreground tracking');
 
       // Stop background services
       await foregroundService.stopForegroundService();
@@ -202,12 +455,15 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
           status: TrackingStatus.tracking,
         ),
       );
+
+      print('✅ TrackingBloc: Foreground tracking resumed');
     }
   }
 
-  /// App closed
   Future<void> _onAppClosed() async {
-    print('📱 App closed, ensuring background tracking continues');
+    print(
+      '📱 TrackingBloc: App closed, ensuring background tracking continues',
+    );
 
     if (state.activeReminder != null) {
       await backgroundService.saveActiveReminderForBackground(
@@ -216,205 +472,17 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     }
   }
 
-  /// Starts location-only mode (no reminder tracking)
-  Future<void> _onStartedForLocationOnly(
-    TrackingStartedForLocationOnly event,
-    Emitter<TrackingState> emit,
-  ) async {
-    _isLocationOnlyMode = true;
-    emit(
-      state.copyWith(status: TrackingStatus.loading, clearErrorMessage: true),
-    );
-
-    try {
-      final result = await getLastCachedLocation(const NoParams());
-
-      await result.fold(
-        (failure) async {
-          await _startLiveLocationStream(emit);
-          _startServiceStatusListener();
-        },
-        (cachedLocation) async {
-          if (cachedLocation != null) {
-            emit(
-              state.copyWith(
-                status: TrackingStatus.tracking,
-                current: cachedLocation,
-                isLive: false,
-                activeReminder: null,
-                distanceMeters: null,
-                insideRadius: null,
-                triggered: false,
-                trackingSettings: null,
-                clearErrorMessage: true,
-              ),
-            );
-          }
-
-          await _startLiveLocationStream(emit);
-          _startServiceStatusListener();
-        },
-      );
-    } catch (e) {
-      emit(
-        state.copyWith(
-          status: TrackingStatus.failure,
-          errorMessage: e.toString(),
-          clearErrorMessage: false,
-        ),
-      );
-    }
-  }
-
-  /// Stops all tracking and cleans up resources
-  Future<void> _onStopped(
-    TrackingStopped event,
-    Emitter<TrackingState> emit,
-  ) async {
-    await backgroundService.saveActiveReminderForBackground(null);
-    await foregroundService.stopForegroundService();
-    await _cancelAllSubscriptions();
-    _resetTrackingState();
-    _isLocationOnlyMode = false;
-
-    // ========== NEW: Stop ETA calculation ==========
-    etaBloc.add(const ETACalculationStopped());
-    // ===============================================
-
-    emit(
-      state.copyWith(
-        status: TrackingStatus.idle,
-        isLive: false,
-        errorMessage: event.error,
-        clearErrorMessage: event.error == null,
-      ),
-    );
-  }
-
-  Future<void> _onLocationUpdated(
-    _TrackingLocationUpdated event,
-    Emitter<TrackingState> emit,
-  ) async {
-    final location = event.location;
-    _lastLocationTime = DateTime.now();
-
-    if (state.activeReminder != null) {
-      final reminder = state.activeReminder!;
-      final distance = _calculateDistance(
-        location.latitude,
-        location.longitude,
-        reminder.latitude,
-        reminder.longitude,
-      );
-
-      final isInsideRadius = distance <= reminder.triggerDistanceMeters;
-      final justEntered = isInsideRadius && !_wasInsideRadius;
-
-      if (justEntered) {
-        await _triggerArrivalNotification(reminder, distance);
-      }
-
-      _wasInsideRadius = isInsideRadius;
-      _lastDistance = distance;
-
-      print(
-        '📍 TrackingBloc: Location update - Distance: ${distance.toStringAsFixed(2)}m, Has Active Reminder: ${state.activeReminder != null}',
-      );
-
-      // ========== CORRECT: Send location update to ETABloc ==========
-      // This is the correct way - send event to ETABloc
-      etaBloc.add(
-        ETALocationUpdated(
-          currentLat: location.latitude,
-          currentLon: location.longitude,
-          speed: location.speed ?? 0.0,
-          distance: distance,
-        ),
-      );
-      // =======================================================
-
-      emit(
-        state.copyWith(
-          current: location,
-          distanceMeters: distance,
-          insideRadius: isInsideRadius,
-          status: TrackingStatus.tracking,
-          isLive: true,
-        ),
-      );
-    } else {
-      print('⚠️ TrackingBloc: No active reminder, not sending ETA update');
-
-      emit(
-        state.copyWith(
-          current: location,
-          status: TrackingStatus.tracking,
-          isLive: true,
-        ),
-      );
-    }
-  }
-
-  /// Adjusts tracking settings based on distance and movement
-  Future<void> _onSettingsAdjusted(
-    TrackingSettingsAdjusted event,
-    Emitter<TrackingState> emit,
-  ) async {
-    final reminder = state.activeReminder;
-    if (reminder == null) return;
-
-    await _locationSubscription?.cancel();
-
-    await _startTrackingWithSettings(
-      distanceFilter: event.distanceFilter,
-      accuracy: event.accuracy,
-      reminder: reminder,
-    );
-  }
-
-  /// Handles location service being enabled
-  Future<void> _onServiceEnabled(
-    _TrackingServiceEnabled event,
-    Emitter<TrackingState> emit,
-  ) async {
-    if (_isLocationOnlyMode) {
-      await _startLiveLocationStream(emit);
-    } else if (state.activeReminder != null) {
-      await _startTrackingWithSettings(
-        distanceFilter: 10,
-        accuracy: LocationAccuracy.high,
-        reminder: state.activeReminder!,
-      );
-    }
-  }
-
-  /// Handles location service being disabled
-  Future<void> _onServiceDisabled(
-    _TrackingServiceDisabled event,
-    Emitter<TrackingState> emit,
-  ) async {
-    await _locationSubscription?.cancel();
-    _locationSubscription = null;
-
-    emit(
-      state.copyWith(
-        isLive: false,
-        status: TrackingStatus.tracking,
-        errorMessage:
-            'Location service is disabled. Turn it on to get live updates.',
-        clearErrorMessage: false,
-      ),
-    );
-  }
-
   // ==================== LOCATION STREAMING ====================
 
   /// Starts the live location stream
   Future<void> _startLiveLocationStream(Emitter<TrackingState> emit) async {
+    print('📍 TrackingBloc: Starting live location stream...');
+
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
+        print('⚠️ TrackingBloc: Location service is disabled');
         if (!emit.isDone) {
           emit(
             state.copyWith(
@@ -439,14 +507,21 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       await _locationSubscription?.cancel();
 
       _locationSubscription = stream.listen(
-        (location) => add(_TrackingLocationUpdated(location)),
+        (location) {
+          print('📍 TrackingBloc: Location received from stream');
+          add(_TrackingLocationUpdated(location));
+        },
         onError: (error) {
+          print('❌ TrackingBloc: Location stream error: $error');
           if (!isClosed) {
             add(const _TrackingServiceDisabled());
           }
         },
       );
+
+      print('✅ TrackingBloc: Live location stream started');
     } catch (e) {
+      print('❌ TrackingBloc: Error starting live location stream: $e');
       if (!emit.isDone) {
         emit(
           state.copyWith(
@@ -460,36 +535,33 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     }
   }
 
+  /// Starts tracking with specific settings
   Future<void> _startTrackingWithSettings({
     required double distanceFilter,
     required LocationAccuracy accuracy,
     required DestinationReminder reminder,
   }) async {
-    print('🟠 TrackingBloc: _startTrackingWithSettings called');
+    print('📍 TrackingBloc: Starting tracking with settings...');
     print('   distanceFilter: $distanceFilter, accuracy: $accuracy');
 
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      print('🟠 TrackingBloc: Location service enabled: $serviceEnabled');
+      print('   Location service enabled: $serviceEnabled');
 
       if (!serviceEnabled) {
         print('⚠️ TrackingBloc: Location service is disabled!');
-        // Don't emit here - let the caller handle it
         return;
       }
 
-      print('🟠 TrackingBloc: Calling watchPosition...');
       final stream = await watchPosition(
         WatchPositionParams(distanceFilter: distanceFilter, accuracy: accuracy),
       );
-      print('🟠 TrackingBloc: watchPosition stream received');
 
       await _locationSubscription?.cancel();
-      print('🟠 TrackingBloc: Setting up location subscription...');
 
       _locationSubscription = stream.listen(
         (location) {
-          print('🟢 TrackingBloc: Location received from stream!');
+          print('📍 TrackingBloc: Location received from stream');
           add(_TrackingLocationUpdated(location));
         },
         onError: (error) {
@@ -506,7 +578,6 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       print('✅ TrackingBloc: Location subscription set up successfully');
     } catch (e) {
       print('❌ TrackingBloc: Error in _startTrackingWithSettings: $e');
-      // Don't emit here - let the caller handle it
     }
   }
 
@@ -520,8 +591,10 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
       status,
     ) {
       if (status == ServiceStatus.enabled) {
+        print('✅ TrackingBloc: Location service enabled (from stream)');
         add(const _TrackingServiceEnabled());
       } else if (status == ServiceStatus.disabled) {
+        print('⚠️ TrackingBloc: Location service disabled (from stream)');
         add(const _TrackingServiceDisabled());
       }
     });
@@ -558,6 +631,9 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
               (newDistanceFilter / currentSettings.distanceFilter).abs() > 1.5);
 
       if (shouldAdjust) {
+        print(
+          '⚙️ TrackingBloc: Adjusting adaptive settings - distanceFilter: $newDistanceFilter',
+        );
         add(
           TrackingSettingsAdjusted(
             distanceFilter: newDistanceFilter,
@@ -607,7 +683,7 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     return (distanceFilter, accuracy);
   }
 
-  // ==================== DISTANCE & NOTIFICATION ====================
+  // ==================== DISTANCE & ALARM ====================
 
   /// Calculates distance between two coordinates using Haversine formula
   double _calculateDistance(
@@ -619,18 +695,35 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     return Geolocator.distanceBetween(lat1, lon1, lat2, lon2);
   }
 
-  /// Triggers arrival notification
-  Future<void> _triggerArrivalNotification(
+  /// Triggers arrival alarm when destination is reached
+  Future<void> _triggerArrivalAlarm(
     DestinationReminder reminder,
     double distance,
   ) async {
+    if (_alarmTriggered) {
+      print('⚠️ TrackingBloc: Alarm already triggered, skipping');
+      return;
+    }
+
+    _alarmTriggered = true;
+    print('🚨 TrackingBloc: ARRIVAL TRIGGERED - ${reminder.label}');
+    print('   Distance: ${distance.toStringAsFixed(2)}m');
+
     try {
-      await notifications.showArrivalNotification(
-        title: '📍 Arrived at ${reminder.label}',
-        body: 'You are ${distance.toStringAsFixed(0)}m from your destination!',
+      // Trigger ALARM (not notification)
+      await alarmService.triggerArrivalAlarm(
+        destinationName: reminder.label,
+        distanceMeters: distance,
       );
+
+      print('✅ TrackingBloc: Alarm triggered successfully');
+
+      // Stop tracking after a short delay to ensure alarm is set
+      await Future.delayed(const Duration(milliseconds: 500));
+      add(const TrackingStopped());
     } catch (e) {
-      // Silently handle notification errors
+      print('❌ TrackingBloc: Error triggering alarm: $e');
+      _alarmTriggered = false; // Reset flag on error
     }
   }
 
@@ -651,10 +744,12 @@ class TrackingBloc extends Bloc<TrackingEvent, TrackingState> {
     _lastDistance = double.infinity;
     _lastLocationTime = null;
     _wasInsideRadius = false;
+    _alarmTriggered = false; // ← Reset alarm flag
   }
 
   @override
   Future<void> close() async {
+    print('🛑 TrackingBloc: Closing...');
     await foregroundService.stopForegroundService();
     await backgroundService.stopBackgroundTracking();
     await _cancelAllSubscriptions();

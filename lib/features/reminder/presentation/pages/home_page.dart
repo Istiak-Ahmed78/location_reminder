@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:location_reminder/core/di/injection_container.dart'
-    as di; // ← ADD THIS IMPORT
+import 'package:location_reminder/core/di/injection_container.dart' as di;
 import 'package:location_reminder/features/reminder/domain/entities/destination_reminder.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_event.dart';
 import 'package:location_reminder/features/reminder/presentation/bloc/eta_state.dart';
@@ -39,11 +39,15 @@ class _HomeViewState extends State<HomeView> {
     super.initState();
     _mapController = MapController();
 
-    // Load reminder first
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Request battery optimization bypass and start tracking
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ========== REQUEST BATTERY OPTIMIZATION BYPASS ==========
+      await _requestBatteryOptimizationBypass();
+
+      // ========== LOAD REMINDER AND START TRACKING ==========
       context.read<ReminderBloc>().add(const ReminderLoaded());
 
-      // Wait a bit for reminder to load, then check
+      // Wait for reminder to load
       Future.delayed(const Duration(milliseconds: 500), () {
         final reminderState = context.read<ReminderBloc>().state;
         print(
@@ -67,6 +71,91 @@ class _HomeViewState extends State<HomeView> {
   void dispose() {
     _mapController.dispose();
     super.dispose();
+  }
+
+  // ==================== REQUEST BATTERY OPTIMIZATION BYPASS ====================
+  Future<void> _requestBatteryOptimizationBypass() async {
+    // Check if battery optimization is already disabled
+    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+      // Show dialog explaining why we need this
+      if (!mounted) return;
+
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.battery_alert, color: Colors.orange[700], size: 28),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Battery Optimization',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'To ensure location alarms work reliably in the background, this app needs to bypass battery optimization.',
+                style: TextStyle(fontSize: 14, height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.orange[700],
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'This won\'t drain your battery significantly.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Skip'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+
+      // If user agreed, open battery optimization settings
+      if (result == true) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    }
   }
 
   // ==================== SHOW CREATE REMINDER BOTTOM SHEET ====================
@@ -263,6 +352,7 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
+  // ==================== SAVE REMINDER ====================
   void _saveReminder(String label, double distance, LatLng location) {
     final reminder = DestinationReminder(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -277,6 +367,7 @@ class _HomeViewState extends State<HomeView> {
     context.read<ReminderBloc>().add(ReminderSaved(reminder));
     context.read<TrackingBloc>().add(const TrackingStarted());
 
+    // Fit map to show both current location and destination
     if (_currentLocation != null) {
       final bounds = LatLngBounds.fromPoints([_currentLocation!, location]);
       _mapController.fitCamera(
@@ -343,10 +434,12 @@ class _HomeViewState extends State<HomeView> {
           TextButton(
             onPressed: () {
               Navigator.pop(dialogContext);
+
+              // Clear reminder and stop tracking
               context.read<ReminderBloc>().add(const ReminderCleared());
               context.read<TrackingBloc>().add(const TrackingStopped());
 
-              // Get ETABloc from DI instead of context.read
+              // Stop ETA calculation
               final etaBloc = di.sl<ETABloc>();
               etaBloc.add(const ETACalculationStopped());
 
@@ -368,6 +461,7 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
+  // ==================== BUILD DETAIL ROW ====================
   Widget _buildDetailRow(IconData icon, String label, String value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -396,6 +490,7 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
+  // ==================== FORMAT DATE TIME ====================
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
@@ -429,6 +524,7 @@ class _HomeViewState extends State<HomeView> {
     }
   }
 
+  // ==================== BUILD UI ====================
   @override
   Widget build(BuildContext context) {
     // Get ETABloc from DI (SINGLETON instance)
@@ -587,22 +683,5 @@ class _HomeViewState extends State<HomeView> {
         backgroundColor: Colors.orange,
       ),
     );
-  }
-
-  // ==================== FORMAT ETA FROM SECONDS ====================
-  String _formatETA(int seconds) {
-    if (seconds < 60) {
-      return '< 1m';
-    }
-
-    final duration = Duration(seconds: seconds);
-
-    if (duration.inHours > 0) {
-      final hours = duration.inHours;
-      final minutes = duration.inMinutes.remainder(60);
-      return '${hours}h ${minutes}m';
-    } else {
-      return '${duration.inMinutes}m';
-    }
   }
 }
